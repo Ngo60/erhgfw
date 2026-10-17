@@ -15,6 +15,8 @@ import { defaultRunner } from '../lib/store.js';
 import { sanitizeSettings } from '../lib/validate.js';
 
 const SLICE_MS = 20_000;
+/** Ошибки скачивания: повтор берёт уже найденные изображения и не запускает новую генерацию. */
+const REDOWNLOAD_CODES = ['DOWNLOAD_FAILED', 'SIZE_MISMATCH', 'FETCH_FAILED'];
 const iso = (ms) => new Date(ms).toISOString();
 const ev = (level, code, message, data) => ({ level, code, message, ...(data ? { data } : {}) });
 
@@ -768,7 +770,7 @@ export class Orchestrator {
     await this.#go('blocked', {
       job: cur,
       jobStatus: cur && IN_FLIGHT.has(cur.status) ? 'pending' : cur?.status,
-      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null } : {},
+      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...(keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1) }) } : {},
       runnerPatch: { block: { code, message, at: iso(this.now()) }, pause_requested: false, job_id: cur?.image_job_id ?? this.store.runner.job_id },
       events: [ev('error', code, message)],
     });
@@ -800,7 +802,7 @@ export class Orchestrator {
     if (job.attempts >= st.settings.maxAttempts) return this.#failJob(code, `${detail} (попытки исчерпаны: ${job.attempts})`, job);
     const t = this.now();
     const retryAt = t + backoffMs(job.attempts);
-    const downloadPhase = ['DOWNLOAD_FAILED', 'SIZE_MISMATCH', 'FETCH_FAILED', 'PREVIEW_ONLY', 'DUPLICATE_IMAGE', 'UNSUPPORTED_IMAGE_FORMAT'].includes(code);
+    const downloadPhase = REDOWNLOAD_CODES.includes(code);
     await this.#go('retryable_error', {
       job,
       jobStatus: 'retryable_error',
@@ -821,7 +823,7 @@ export class Orchestrator {
       await this.#go('failed', {
         job,
         jobStatus: 'failed',
-        jobPatch: { error: { code, message }, completed_at: iso(t), submitted: null, ...(code === 'MULTIPLE_IMAGES' ? {} : { resume_from: null, candidates: null }) },
+        jobPatch: { error: { code, message }, completed_at: iso(t), submitted: null, ...(code === 'MULTIPLE_IMAGES' || REDOWNLOAD_CODES.includes(code) ? {} : { resume_from: null, candidates: null }) },
         runnerPatch: { failure_kind: 'job', next_allowed_at: t + st.settings.intervalSec * 1000, policy_streak: streak, job_id: job.image_job_id },
         events: [ev('error', code, `Задание не выполнено: ${message}`)],
       });
