@@ -18,7 +18,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .whitespace-pre-wrap{white-space:pre-wrap;background:#f4f4f4;border-radius:18px;padding:10px 16px;max-width:80%;word-break:break-word}
 .markdown p{margin:0}
 .agent-turn{color:#555}
-.agent-turn img{display:block;max-width:100%;height:auto;border-radius:12px;margin-bottom:8px}
+.agent-turn img{display:block;max-width:min(100%,512px);height:auto;border-radius:12px;margin-bottom:8px}
 .error-banner{max-width:768px;margin:0 auto 24px;padding:0 16px;display:flex;gap:12px;align-items:center}
 .error-banner [role=alert]{color:#b42318}
 .welcome{flex:1;display:flex;align-items:center;justify-content:center;color:#555}
@@ -51,6 +51,7 @@ function clientMain(BOOT) {
     version: BOOT.view.version,
     localRunning: false, // send in flight (optimistic stop button)
     localView: false, // send failed: the page keeps a view the server does not know about
+    pending: null, // user turn shown optimistically until the server's view contains it
     sendPromise: null,
   };
   let els = {};
@@ -77,6 +78,11 @@ function clientMain(BOOT) {
     return e;
   }
 
+  const uuid = () =>
+    crypto.randomUUID
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => ((Math.random() * 16) | 0).toString(16));
+
   const post = (url, body) =>
     fetch(url, {
       method: 'POST',
@@ -96,13 +102,24 @@ function clientMain(BOOT) {
   function readLines(root, forCaret) {
     const lines = [];
     let cur = null;
-    let br = false; // a <br> ended the open line but may only be the block's invisible trailing break
+    // A break (<br> or "\n" under white-space: pre-wrap) ends the open line, but at the end of a block it is only
+    // the invisible placeholder that keeps the last line visible; it counts once more content follows.
+    let br = false;
     const commitBr = () => {
       if (br) {
         lines.push(cur === null ? '' : cur);
         cur = '';
         br = false;
       }
+    };
+    const lineBreak = () => {
+      if (br) {
+        lines.push(cur === null ? '' : cur);
+        cur = '';
+      } else if (cur === null) {
+        cur = '';
+      }
+      br = true;
     };
     const flush = () => {
       if (br && forCaret) {
@@ -116,11 +133,7 @@ function clientMain(BOOT) {
     const text = (s) => {
       const parts = s.replace(/\r\n?/g, '\n').split('\n');
       for (let i = 0; i < parts.length; i++) {
-        if (i > 0) {
-          commitBr();
-          lines.push(cur === null ? '' : cur);
-          cur = '';
-        }
+        if (i > 0) lineBreak();
         if (parts[i] !== '') {
           commitBr();
           cur = (cur === null ? '' : cur) + parts[i];
@@ -134,13 +147,7 @@ function clientMain(BOOT) {
         } else if (ch.nodeType === 1) {
           const tag = ch.tagName;
           if (tag === 'BR') {
-            if (br) {
-              lines.push(cur === null ? '' : cur);
-              cur = '';
-            } else if (cur === null) {
-              cur = '';
-            }
-            br = true;
+            lineBreak();
           } else if (BLOCK_TAGS.test(tag)) {
             flush();
             if (forCaret && !ch.firstChild) lines.push('');
@@ -180,8 +187,8 @@ function clientMain(BOOT) {
     for (let i = 0; i < root.children.length; i++) {
       const p = root.children[i];
       if (empty && i === 0) {
-        if (p.className !== 'placeholder') p.className = 'placeholder';
         if (p.getAttribute('data-placeholder') !== 'Ask anything') p.setAttribute('data-placeholder', 'Ask anything');
+        if (p.className !== 'placeholder') p.className = 'placeholder';
       } else {
         if (p.hasAttribute('class')) p.removeAttribute('class');
         if (p.hasAttribute('data-placeholder')) p.removeAttribute('data-placeholder');
@@ -445,7 +452,8 @@ function clientMain(BOOT) {
   function renderThread() {
     const thread = els.thread;
     if (!thread) return;
-    const turns = S.ui.loggedOut ? [] : S.view.turns;
+    let turns = S.ui.loggedOut ? [] : S.view.turns;
+    if (S.pending && !S.ui.loggedOut && !turns.some((t) => t.id === S.pending.id)) turns = [...turns, S.pending];
     const seen = new Set();
     let prev = null;
     turns.forEach((t, i) => {
@@ -496,12 +504,16 @@ function clientMain(BOOT) {
   async function doSend() {
     const text = composerText().trim();
     if (!text) return;
+    const turnId = 't_' + uuid();
+    const msgId = uuid();
     clearComposer();
+    S.pending = { id: turnId, role: 'user', text, msgId, rev: 1 };
     S.localRunning = true;
+    renderThread();
     updateControls();
     const p = (async () => {
       try {
-        const r = await post('/__mock/send', { conv_id: S.convId, text });
+        const r = await post('/__mock/send', { conv_id: S.convId, text, turn_id: turnId, message_id: msgId });
         if (!r.ok) throw new Error('send failed: ' + r.status);
         const { conv_id } = await r.json();
         if (S.convId !== conv_id) {
@@ -515,11 +527,7 @@ function clientMain(BOOT) {
       } catch (e) {
         S.localRunning = false;
         S.localView = true;
-        S.view = {
-          ...S.view,
-          running: true,
-          turns: [...S.view.turns, { id: 'local-' + Date.now(), role: 'user', text, msgId: 'local-' + Date.now(), rev: 1 }],
-        };
+        S.view = { ...S.view, running: true };
         renderThread();
         updateControls();
       }
@@ -569,6 +577,7 @@ function clientMain(BOOT) {
     if (d.version === S.version || stale) return;
     S.version = d.version;
     S.view = d;
+    if (S.pending && d.turns.some((t) => t.id === S.pending.id)) S.pending = null;
     renderThread();
     updateControls();
   }
@@ -594,6 +603,7 @@ function clientMain(BOOT) {
     S.version = null;
     S.localRunning = false;
     S.localView = false;
+    S.pending = null;
     S.sendPromise = null;
     clearComposer();
     renderThread();
