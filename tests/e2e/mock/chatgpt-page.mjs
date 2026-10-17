@@ -18,7 +18,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .whitespace-pre-wrap{white-space:pre-wrap;background:#f4f4f4;border-radius:18px;padding:10px 16px;max-width:80%;word-break:break-word}
 .markdown p{margin:0}
 .agent-turn{color:#555}
-.agent-turn img{display:block;max-width:100%;height:auto;border-radius:12px;margin-bottom:8px}
+.agent-turn img{display:block;max-width:min(100%,512px);height:auto;border-radius:12px;margin-bottom:8px}
 .error-banner{max-width:768px;margin:0 auto 24px;padding:0 16px;display:flex;gap:12px;align-items:center}
 .error-banner [role=alert]{color:#b42318}
 .welcome{flex:1;display:flex;align-items:center;justify-content:center;color:#555}
