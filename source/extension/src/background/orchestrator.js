@@ -15,6 +15,8 @@ import { defaultRunner } from '../lib/store.js';
 import { sanitizeSettings } from '../lib/validate.js';
 
 const SLICE_MS = 20_000;
+/** Ошибки скачивания: повтор берёт уже найденные изображения и не запускает новую генерацию. */
+const REDOWNLOAD_CODES = ['DOWNLOAD_FAILED', 'SIZE_MISMATCH', 'FETCH_FAILED'];
 const iso = (ms) => new Date(ms).toISOString();
 const ev = (level, code, message, data) => ({ level, code, message, ...(data ? { data } : {}) });
 
@@ -188,7 +190,7 @@ export class Orchestrator {
     if (!jobs.length) throw new CommandError('NOTHING_TO_DO', 'Ошибочных заданий нет.');
     const t = iso(this.now());
     const patch = {};
-    for (const j of jobs) patch[j.image_job_id] = { ...j, status: 'pending', attempts: 0, error: null, retry_at: 0, updated_at: t, completed_at: null };
+    for (const j of jobs) patch[j.image_job_id] = { ...j, status: 'pending', attempts: 0, download_attempts: 0, downloads: null, error: null, retry_at: 0, updated_at: t, completed_at: null };
     await st.commit({ jobs: patch, batches: { [batchId]: { ...batch, status: 'ready' } }, events: [{ batch_id: batchId, ...ev('info', 'RETRY_FAILED', `Сброшено ошибочных заданий: ${jobs.length}`) }] });
     if (['idle', 'completed', 'failed'].includes(st.runner.state) && st.runner.state !== 'failed') await this.#begin(st.getBatch(batchId), 'START', 'Повтор ошибочных заданий');
     else if (st.runner.state === 'failed') await this.#begin(st.getBatch(batchId), 'START', 'Повтор ошибочных заданий');
@@ -768,7 +770,7 @@ export class Orchestrator {
     await this.#go('blocked', {
       job: cur,
       jobStatus: cur && IN_FLIGHT.has(cur.status) ? 'pending' : cur?.status,
-      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null } : {},
+      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...(keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1) }) } : {},
       runnerPatch: { block: { code, message, at: iso(this.now()) }, pause_requested: false, job_id: cur?.image_job_id ?? this.store.runner.job_id },
       events: [ev('error', code, message)],
     });
@@ -797,18 +799,31 @@ export class Orchestrator {
   async #retryOrFail(code, detail, job) {
     const st = this.store;
     if (!job) return this.#failJob(code, detail, job);
-    if (job.attempts >= st.settings.maxAttempts) return this.#failJob(code, `${detail} (попытки исчерпаны: ${job.attempts})`, job);
+    const redownload = REDOWNLOAD_CODES.includes(code) && Boolean(job.candidates?.length);
+    const used = redownload ? (job.download_attempts ?? 0) + 1 : job.attempts;
+    if (used >= st.settings.maxAttempts) return this.#failJob(code, `${detail} (попытки исчерпаны: ${used})`, job);
+    if (code === 'STALLED' || code === 'TIMEOUT') await this.#stopStuckGeneration();
     const t = this.now();
-    const retryAt = t + backoffMs(job.attempts);
-    const downloadPhase = ['DOWNLOAD_FAILED', 'SIZE_MISMATCH', 'FETCH_FAILED', 'PREVIEW_ONLY', 'DUPLICATE_IMAGE', 'UNSUPPORTED_IMAGE_FORMAT'].includes(code);
+    const retryAt = t + backoffMs(used);
     await this.#go('retryable_error', {
       job,
       jobStatus: 'retryable_error',
-      jobPatch: { error: { code, message: detail }, retry_at: retryAt, submitted: null, ...(downloadPhase && job.candidates?.length ? {} : { candidates: null, downloads: null, resume_from: null }) },
+      jobPatch: { error: { code, message: detail }, retry_at: retryAt, submitted: null, ...(redownload ? { download_attempts: used, downloads: null } : { candidates: null, downloads: null, resume_from: null }) },
       runnerPatch: { retry_at: retryAt, job_id: job.image_job_id },
-      events: [ev('warn', code, `${detail} Повтор через ${Math.round((retryAt - t) / 1000)} с (попытка ${job.attempts} из ${st.settings.maxAttempts})`)],
+      events: [ev('warn', code, `${detail} Повтор через ${Math.round((retryAt - t) / 1000)} с (попытка ${used} из ${st.settings.maxAttempts})`)],
     });
     return true;
+  }
+
+  /** Своя зависшая генерация останавливается кнопкой «Стоп» — иначе поле ввода ChatGPT остаётся занятым. */
+  async #stopStuckGeneration() {
+    const tabId = this.store.runner.chat?.tabId;
+    if (tabId == null) return;
+    try {
+      await this.d.page.cancel(tabId);
+    } catch {
+      // вкладка недоступна — повтор сам обнаружит это
+    }
   }
 
   async #failJob(code, detail, job) {
@@ -817,21 +832,33 @@ export class Orchestrator {
     const t = this.now();
     const streak = code === 'CONTENT_POLICY' ? (r.policy_streak ?? 0) + 1 : 0;
     const message = detail || errInfo(code).ru;
-    if (job) {
+    if (code === 'STALLED' || code === 'TIMEOUT') await this.#stopStuckGeneration();
+    if (!job) {
+      await this.#go('failed', { runnerPatch: { failure_kind: 'fatal', policy_streak: streak }, events: [ev('error', code, message)] });
+      return true;
+    }
+    const jobPatch = { error: { code, message }, completed_at: iso(t), submitted: null, downloads: null, ...(code === 'MULTIPLE_IMAGES' || REDOWNLOAD_CODES.includes(code) ? {} : { resume_from: null, candidates: null }) };
+    const stopNow = code === 'CONTENT_POLICY' && streak >= st.settings.stopAfterPolicyRefusals;
+    if (stopNow) {
+      const text = `Подряд отклонено заданий: ${streak}. Проверьте пресет и промпты. ${errInfo('CONTENT_POLICY').ru}`;
+      await this.#go('blocked', {
+        job,
+        jobStatus: 'failed',
+        jobPatch,
+        runnerPatch: { block: { code: 'CONTENT_POLICY', message: text, at: iso(t) }, policy_streak: streak, pause_requested: false, job_id: job.image_job_id },
+        events: [ev('error', code, `Задание не выполнено: ${message}`), ev('error', 'CONTENT_POLICY', text)],
+      });
+      this.#notify('blocked', 'Очередь остановлена', text);
+    } else {
       await this.#go('failed', {
         job,
         jobStatus: 'failed',
-        jobPatch: { error: { code, message }, completed_at: iso(t), submitted: null, ...(code === 'MULTIPLE_IMAGES' ? {} : { resume_from: null, candidates: null }) },
+        jobPatch,
         runnerPatch: { failure_kind: 'job', next_allowed_at: t + st.settings.intervalSec * 1000, policy_streak: streak, job_id: job.image_job_id },
         events: [ev('error', code, `Задание не выполнено: ${message}`)],
       });
-      await this.#writeMetadata(job.batch_id, job.character_id, { manifest: this.#manifestDue(job.batch_id, job.character_id) }).catch(() => {});
-    } else {
-      await this.#go('failed', { runnerPatch: { failure_kind: 'fatal', policy_streak: streak }, events: [ev('error', code, message)] });
     }
-    if (code === 'CONTENT_POLICY' && streak >= st.settings.stopAfterPolicyRefusals) {
-      await this.#block('CONTENT_POLICY', `Подряд отклонено заданий: ${streak}. Проверьте пресет и промпты.`, { job: null });
-    }
+    await this.#writeMetadata(job.batch_id, job.character_id, { manifest: this.#manifestDue(job.batch_id, job.character_id) }).catch(() => {});
     return true;
   }
 
