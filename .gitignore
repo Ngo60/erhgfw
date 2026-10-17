@@ -1,0 +1,5 @@
+node_modules/
+.hoplite/
+*.log
+.DS_Store
+tests/e2e/.tmp/

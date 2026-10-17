@@ -1,0 +1,774 @@
+{
+  "app": "RealPhoto Prompt Studio",
+  "count": 3,
+  "items": [
+    {
+      "id": "e0",
+      "createdAt": "2026-10-14T17:46:40.000Z",
+      "favorite": false,
+      "seed": "FIX-1",
+      "scenarioId": "city-scooter-docks-pavement~0ahpvoz",
+      "mode": "character",
+      "aspectRatio": "5:4",
+      "profile": "universal",
+      "length": "standard",
+      "mainPrompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 25 years old, with chin-length wavy dark blonde hair with soft bangs, dark brown eyes and light skin with natural texture. She has an average build and is on the shorter side, and no visible makeup. She is gliding slowly along the pavement on a scooter with one foot pushing off beside a row of parked electric scooters on a wide pavement. Taken by an acquaintance standing a few steps away, who said \"hold on a moment\"; the photographer is not in the frame. Framed as a head-and-shoulders portrait, seen from a three-quarter angle. She wears a heather gray tailored trouser suit with a silk shell top and polished loafers. She has a thoughtful, absorbed expression, her attention on what she is doing. It is in the middle of the day in summer, under a clear sky. Lighting: bright direct daylight with well-defined shadows, with open sky light with soft shadows under the scooter decks. In the foreground there is rubber handlebar grips worn smooth on the nearest scooter. Behind her are a street tree with a metal guard around the trunk, and farther back a distant crossing with striped markings and a signal pole. She is the only main subject; a few unposed passers-by appear small and far behind her. Small details: a scooter tipped over on its side near the end of the row and a patch of sticker residue peeling from the dock post. Natural skin texture with visible pores and fine hairs, no beauty retouching, ordinary believable surroundings. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a horizontal (landscape-orientation) 5:4 frame; keep her head and hands fully inside the frame with comfortable margins.",
+      "negativePrompt": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, a second main subject, heavy color filters",
+      "scenario": {
+        "schema": 1,
+        "engine": "1.0.0",
+        "id": "city-scooter-docks-pavement~0ahpvoz",
+        "seed": "FIX-1",
+        "mode": "character",
+        "index": 0,
+        "characterId": "CH-FIX",
+        "subject": {
+          "age": 25,
+          "hairColor": "dark-blonde",
+          "hairLength": "chin",
+          "hairType": "wavy",
+          "hairStyle": "bangs",
+          "eyeColor": "dark-brown",
+          "skinTone": "light",
+          "build": "average",
+          "height": "short",
+          "makeup": "none",
+          "freckles": "none",
+          "glasses": "none",
+          "features": []
+        },
+        "sceneId": "city-scooter-docks-pavement",
+        "category": "city",
+        "rarity": "common",
+        "sceneTitle": "Стоянка электросамокатов на тротуаре",
+        "place": "beside a row of parked electric scooters on a wide pavement",
+        "env": "outdoor",
+        "view": "open",
+        "dress": "out",
+        "weatherMode": "visible",
+        "climate": "temperate",
+        "season": "summer",
+        "weather": "clear",
+        "time": "day",
+        "action": {
+          "id": "city-scooter-docks-pavement.3",
+          "en": "gliding slowly along the pavement on a scooter with one foot pushing off",
+          "ru": "медленно катится по тротуару на самокате, отталкиваясь одной ногой",
+          "posture": "move",
+          "hands": 2,
+          "back": false,
+          "hidden": false,
+          "obj": false
+        },
+        "capture": "by-acquaintance",
+        "framing": "portrait",
+        "angle": "three-quarter",
+        "gaze": "object",
+        "emotion": "thoughtful",
+        "faceVisibility": "full",
+        "hand": "right",
+        "outfit": {
+          "id": "evening-trouser-suit-silk-top-loafers",
+          "en": "a heather gray tailored trouser suit with a silk shell top and polished loafers",
+          "ru": "строгий брючный костюм, шёлковый топ и начищенные лоферы",
+          "tags": [
+            "evening",
+            "smart"
+          ]
+        },
+        "accessories": [],
+        "fg": [
+          "rubber handlebar grips worn smooth on the nearest scooter",
+          "a steel bollard with a scuffed band of reflective tape"
+        ],
+        "mid": [
+          "a street tree with a metal guard around the trunk"
+        ],
+        "far": [
+          "a distant crossing with striped markings and a signal pole",
+          "a tall glass office building at the end of the block"
+        ],
+        "details": [
+          "a scooter tipped over on its side near the end of the row",
+          "a patch of sticker residue peeling from the dock post",
+          "a bicycle chained to a railing in the background"
+        ],
+        "imperfections": [],
+        "light": "bright direct daylight with well-defined shadows, with open sky light with soft shadows under the scooter decks",
+        "crowd": "incidental",
+        "ratio": {
+          "w": 5,
+          "h": 4,
+          "label": "5:4",
+          "orientation": "horizontal"
+        },
+        "look": {
+          "style": "smartphone",
+          "color": "natural",
+          "sharpness": "sharp"
+        },
+        "spontaneity": 55,
+        "detailLevel": "medium",
+        "fingerprint": "0ahpvoz",
+        "attempt": 0,
+        "notes": [],
+        "locks": []
+      },
+      "settings": {
+        "version": 1,
+        "mode": "character",
+        "seed": "",
+        "balance": "balanced",
+        "age": {
+          "min": 20,
+          "max": 45,
+          "exact": null
+        },
+        "backgroundPeople": true,
+        "faceRequired": false,
+        "allowSadEmotions": false,
+        "climate": "auto",
+        "orientation": "auto",
+        "ratio": {
+          "mode": "auto",
+          "preset": "9:16",
+          "custom": {
+            "w": 7,
+            "h": 10
+          }
+        },
+        "captureShares": {
+          "selfie-arm": 28,
+          "selfie-mirror": 8,
+          "selfie-reflection": 4,
+          "front-camera": 12,
+          "tripod-timer": 6,
+          "by-acquaintance": 16,
+          "by-friend-walk": 12,
+          "candid": 14
+        },
+        "choices": {
+          "hairColor": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairLength": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairType": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairStyle": {
+            "mode": "auto",
+            "values": []
+          },
+          "eyeColor": {
+            "mode": "auto",
+            "values": []
+          },
+          "skinTone": {
+            "mode": "auto",
+            "values": []
+          },
+          "build": {
+            "mode": "auto",
+            "values": []
+          },
+          "height": {
+            "mode": "auto",
+            "values": []
+          },
+          "makeup": {
+            "mode": "auto",
+            "values": []
+          },
+          "freckles": {
+            "mode": "auto",
+            "values": []
+          },
+          "glasses": {
+            "mode": "auto",
+            "values": []
+          },
+          "clothingStyle": {
+            "mode": "auto",
+            "values": []
+          },
+          "scene": {
+            "mode": "auto",
+            "values": []
+          },
+          "category": {
+            "mode": "auto",
+            "values": []
+          },
+          "season": {
+            "mode": "auto",
+            "values": []
+          },
+          "weather": {
+            "mode": "auto",
+            "values": []
+          },
+          "time": {
+            "mode": "auto",
+            "values": []
+          },
+          "framing": {
+            "mode": "auto",
+            "values": []
+          },
+          "angle": {
+            "mode": "auto",
+            "values": []
+          },
+          "emotion": {
+            "mode": "auto",
+            "values": []
+          },
+          "posture": {
+            "mode": "auto",
+            "values": []
+          }
+        },
+        "rarity": {
+          "common": 100,
+          "uncommon": 45,
+          "rare": 15
+        },
+        "style": "smartphone",
+        "color": "natural",
+        "sharpness": "sharp",
+        "length": "standard",
+        "detailLevel": "medium",
+        "spontaneity": 55,
+        "randomness": 50,
+        "imperfections": true,
+        "profile": "universal",
+        "includeNegative": true,
+        "showRussian": false,
+        "dupWindow": 50,
+        "seriesLength": 6,
+        "seriesTheme": "auto",
+        "batchCount": 10,
+        "historyLimit": 500,
+        "locks": []
+      }
+    },
+    {
+      "id": "e1",
+      "createdAt": "2026-10-14T17:46:40.001Z",
+      "favorite": false,
+      "seed": "FIX-2",
+      "scenarioId": "food-cafe-terrace-awning~1llo5e4",
+      "mode": "character",
+      "aspectRatio": "3:4",
+      "profile": "universal",
+      "length": "standard",
+      "mainPrompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 25 years old, with chin-length wavy dark blonde hair worn loose, dark brown eyes and light skin with natural texture. She has an average build and is on the shorter side, and minimal natural makeup. She is reaching for a croissant on a small plate at a small table on a café terrace under a striped awning beside a quiet street. An unposed moment caught by someone nearby; she is not performing for the camera. Framed from the waist up, seen from slightly above eye level. She wears a long sage green hooded raincoat, a light sweater, straight trousers and waterproof ankle boots, along with the hood of her jacket pulled up. She has a relaxed neutral expression, glancing off to the side. It is in the morning in spring, with steady light rain falling. Lighting: dim, cool light, with filtered soft light under the awning with a brighter pavement beyond. Foreground: a wicker chair with a flat cushion. Middle distance: a row of small café tables and wicker chairs along the awning edge. In the background: a quiet street with parked bicycles and a tram stop in the distance. She is the only main subject; a few unposed passers-by appear small and far behind her. Small details: raindrops pattering on the taut awning cloth above the table and a thumb-sized smudge on a shiny surface. Unretouched, true-to-life skin and fabrics, believable proportions and consistent shadows. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a vertical (portrait-orientation) 3:4 frame; keep her head and hands fully inside the frame with comfortable margins.",
+      "negativePrompt": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, a second main subject, heavy color filters",
+      "scenario": {
+        "schema": 1,
+        "engine": "1.0.0",
+        "id": "food-cafe-terrace-awning~1llo5e4",
+        "seed": "FIX-2",
+        "mode": "character",
+        "index": 1,
+        "characterId": "CH-FIX",
+        "subject": {
+          "age": 25,
+          "hairColor": "dark-blonde",
+          "hairLength": "chin",
+          "hairType": "wavy",
+          "hairStyle": "loose",
+          "eyeColor": "dark-brown",
+          "skinTone": "light",
+          "build": "average",
+          "height": "short",
+          "makeup": "minimal",
+          "freckles": "none",
+          "glasses": "none",
+          "features": []
+        },
+        "sceneId": "food-cafe-terrace-awning",
+        "category": "food",
+        "rarity": "common",
+        "sceneTitle": "Терраса кафе под навесом",
+        "place": "at a small table on a café terrace under a striped awning beside a quiet street",
+        "env": "covered",
+        "view": "open",
+        "dress": "out",
+        "weatherMode": "visible",
+        "climate": "temperate",
+        "season": "spring",
+        "weather": "rain",
+        "time": "morning",
+        "action": {
+          "id": "food-cafe-terrace-awning.3",
+          "en": "reaching for a croissant on a small plate",
+          "ru": "тянется за круассаном на маленькой тарелке",
+          "posture": "sit",
+          "hands": 1,
+          "back": false,
+          "hidden": false,
+          "obj": true
+        },
+        "capture": "candid",
+        "framing": "waist-up",
+        "angle": "slightly-above",
+        "gaze": "side",
+        "emotion": "neutral",
+        "faceVisibility": "full",
+        "hand": "right",
+        "outfit": {
+          "id": "casual-long-hooded-raincoat-waterproof-boots",
+          "en": "a long sage green hooded raincoat, a light sweater, straight trousers and waterproof ankle boots",
+          "ru": "длинный плащ-дождевик с капюшоном, лёгкий свитер, прямые брюки и непромокаемые ботильоны",
+          "tags": [
+            "casual"
+          ]
+        },
+        "accessories": [
+          "hood-up"
+        ],
+        "fg": [
+          "a wicker chair with a flat cushion",
+          "a small marble-topped table with a saucer and two cups"
+        ],
+        "mid": [
+          "a row of small café tables and wicker chairs along the awning edge"
+        ],
+        "far": [
+          "a quiet street with parked bicycles and a tram stop in the distance",
+          "apartment buildings with iron balconies and shuttered windows"
+        ],
+        "details": [
+          "raindrops pattering on the taut awning cloth above the table",
+          "a thumb-sized smudge on a shiny surface",
+          "a shop shutter only half raised and a few chairs still stacked"
+        ],
+        "imperfections": [],
+        "light": "dim, cool light, with filtered soft light under the awning with a brighter pavement beyond",
+        "crowd": "incidental",
+        "ratio": {
+          "w": 3,
+          "h": 4,
+          "label": "3:4",
+          "orientation": "vertical"
+        },
+        "look": {
+          "style": "smartphone",
+          "color": "natural",
+          "sharpness": "sharp"
+        },
+        "spontaneity": 55,
+        "detailLevel": "medium",
+        "fingerprint": "1llo5e4",
+        "attempt": 0,
+        "notes": [],
+        "locks": []
+      },
+      "settings": {
+        "version": 1,
+        "mode": "character",
+        "seed": "",
+        "balance": "balanced",
+        "age": {
+          "min": 20,
+          "max": 45,
+          "exact": null
+        },
+        "backgroundPeople": true,
+        "faceRequired": false,
+        "allowSadEmotions": false,
+        "climate": "auto",
+        "orientation": "auto",
+        "ratio": {
+          "mode": "auto",
+          "preset": "9:16",
+          "custom": {
+            "w": 7,
+            "h": 10
+          }
+        },
+        "captureShares": {
+          "selfie-arm": 28,
+          "selfie-mirror": 8,
+          "selfie-reflection": 4,
+          "front-camera": 12,
+          "tripod-timer": 6,
+          "by-acquaintance": 16,
+          "by-friend-walk": 12,
+          "candid": 14
+        },
+        "choices": {
+          "hairColor": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairLength": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairType": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairStyle": {
+            "mode": "auto",
+            "values": []
+          },
+          "eyeColor": {
+            "mode": "auto",
+            "values": []
+          },
+          "skinTone": {
+            "mode": "auto",
+            "values": []
+          },
+          "build": {
+            "mode": "auto",
+            "values": []
+          },
+          "height": {
+            "mode": "auto",
+            "values": []
+          },
+          "makeup": {
+            "mode": "auto",
+            "values": []
+          },
+          "freckles": {
+            "mode": "auto",
+            "values": []
+          },
+          "glasses": {
+            "mode": "auto",
+            "values": []
+          },
+          "clothingStyle": {
+            "mode": "auto",
+            "values": []
+          },
+          "scene": {
+            "mode": "auto",
+            "values": []
+          },
+          "category": {
+            "mode": "auto",
+            "values": []
+          },
+          "season": {
+            "mode": "auto",
+            "values": []
+          },
+          "weather": {
+            "mode": "auto",
+            "values": []
+          },
+          "time": {
+            "mode": "auto",
+            "values": []
+          },
+          "framing": {
+            "mode": "auto",
+            "values": []
+          },
+          "angle": {
+            "mode": "auto",
+            "values": []
+          },
+          "emotion": {
+            "mode": "auto",
+            "values": []
+          },
+          "posture": {
+            "mode": "auto",
+            "values": []
+          }
+        },
+        "rarity": {
+          "common": 100,
+          "uncommon": 45,
+          "rare": 15
+        },
+        "style": "smartphone",
+        "color": "natural",
+        "sharpness": "sharp",
+        "length": "standard",
+        "detailLevel": "medium",
+        "spontaneity": 55,
+        "randomness": 50,
+        "imperfections": true,
+        "profile": "universal",
+        "includeNegative": true,
+        "showRussian": false,
+        "dupWindow": 50,
+        "seriesLength": 6,
+        "seriesTheme": "auto",
+        "batchCount": 10,
+        "historyLimit": 500,
+        "locks": []
+      }
+    },
+    {
+      "id": "e2",
+      "createdAt": "2026-10-14T17:46:40.002Z",
+      "favorite": false,
+      "seed": "FIX-3",
+      "scenarioId": "water-gym-treadmill-row~0a1z4zr",
+      "mode": "character",
+      "aspectRatio": "3:4",
+      "profile": "universal",
+      "length": "standard",
+      "mainPrompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 25 years old, with chin-length wavy dark blonde hair half pulled back, dark brown eyes and light skin with natural texture. She has an average build and is on the shorter side, and minimal natural makeup. She is walking on a treadmill at an easy pace with one hand resting on the side rail in a fitness gym beside a row of treadmills facing a long mirror wall. It is a selfie taken with her right arm extended toward the front camera; the phone stays out of frame. Framed as a close-up on her face and shoulders, seen from a three-quarter angle. She wears a black sports top, high-waisted leggings and a loose zip-up hoodie with training shoes, along with a simple wristwatch and a worn canvas backpack on her shoulders. Looking into the front camera, she has a thoughtful, absorbed expression. It is night. Lighting: lit by bright overhead tube lighting and the cool glow of the cardio machine screens. In the foreground there is a water bottle in the cup holder of the console. Behind her are a long mirror wall reflecting the whole row, and farther back a rack of dumbbells against the back wall. She is the only main subject; a few unposed passers-by appear small and far behind her. Small details: bright reflections of the machine screens across the lower part of the mirror and a seam sitting slightly crooked in the fabric. Unretouched, true-to-life skin and fabrics, believable proportions and consistent shadows. Even in the low light the background stays readable, with only mild noise in the shadows and no artificial blur. Natural colors with no filters. Composed for a vertical (portrait-orientation) 3:4 frame; keep her head and hands fully inside the frame with comfortable margins.",
+      "negativePrompt": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, visible phone in a front-camera selfie, a second main subject, heavy color filters, daytime lighting in a night scene",
+      "scenario": {
+        "schema": 1,
+        "engine": "1.0.0",
+        "id": "water-gym-treadmill-row~0a1z4zr",
+        "seed": "FIX-3",
+        "mode": "character",
+        "index": 2,
+        "characterId": "CH-FIX",
+        "subject": {
+          "age": 25,
+          "hairColor": "dark-blonde",
+          "hairLength": "chin",
+          "hairType": "wavy",
+          "hairStyle": "half-up",
+          "eyeColor": "dark-brown",
+          "skinTone": "light",
+          "build": "average",
+          "height": "short",
+          "makeup": "minimal",
+          "freckles": "none",
+          "glasses": "none",
+          "features": []
+        },
+        "sceneId": "water-gym-treadmill-row",
+        "category": "water-sport",
+        "rarity": "common",
+        "sceneTitle": "Спортзал: ряд беговых дорожек",
+        "place": "in a fitness gym beside a row of treadmills facing a long mirror wall",
+        "env": "indoor",
+        "view": "none",
+        "dress": "in",
+        "weatherMode": "irrelevant",
+        "climate": "temperate",
+        "season": "winter",
+        "weather": null,
+        "time": "night",
+        "action": {
+          "id": "water-gym-treadmill-row.0",
+          "en": "walking on a treadmill at an easy pace with one hand resting on the side rail",
+          "ru": "идёт по беговой дорожке лёгким шагом, одна рука на боковом поручне",
+          "posture": "walk",
+          "hands": 1,
+          "back": false,
+          "hidden": false,
+          "obj": false
+        },
+        "capture": "selfie-arm",
+        "framing": "close-up",
+        "angle": "three-quarter",
+        "gaze": "camera",
+        "emotion": "thoughtful",
+        "faceVisibility": "full",
+        "hand": "right",
+        "outfit": {
+          "id": "sport-top-high-waist-leggings-zip-hoodie",
+          "en": "a black sports top, high-waisted leggings and a loose zip-up hoodie with training shoes",
+          "ru": "спортивный топ, леггинсы с высокой талией и свободная толстовка на молнии, кроссовки",
+          "tags": [
+            "sport"
+          ]
+        },
+        "accessories": [
+          "wristwatch",
+          "backpack"
+        ],
+        "fg": [
+          "a water bottle in the cup holder of the console",
+          "a treadmill console with a worn rubber-coated handrail"
+        ],
+        "mid": [
+          "a long mirror wall reflecting the whole row"
+        ],
+        "far": [
+          "a rack of dumbbells against the back wall",
+          "a ceiling crossed by air ducts and square vents"
+        ],
+        "details": [
+          "bright reflections of the machine screens across the lower part of the mirror",
+          "a seam sitting slightly crooked in the fabric",
+          "a loose strand of hair falling out of place"
+        ],
+        "imperfections": [],
+        "light": "lit by bright overhead tube lighting and the cool glow of the cardio machine screens",
+        "crowd": "incidental",
+        "ratio": {
+          "w": 3,
+          "h": 4,
+          "label": "3:4",
+          "orientation": "vertical"
+        },
+        "look": {
+          "style": "smartphone",
+          "color": "natural",
+          "sharpness": "sharp"
+        },
+        "spontaneity": 55,
+        "detailLevel": "medium",
+        "fingerprint": "0a1z4zr",
+        "attempt": 0,
+        "notes": [],
+        "locks": []
+      },
+      "settings": {
+        "version": 1,
+        "mode": "character",
+        "seed": "",
+        "balance": "balanced",
+        "age": {
+          "min": 20,
+          "max": 45,
+          "exact": null
+        },
+        "backgroundPeople": true,
+        "faceRequired": false,
+        "allowSadEmotions": false,
+        "climate": "auto",
+        "orientation": "auto",
+        "ratio": {
+          "mode": "auto",
+          "preset": "9:16",
+          "custom": {
+            "w": 7,
+            "h": 10
+          }
+        },
+        "captureShares": {
+          "selfie-arm": 28,
+          "selfie-mirror": 8,
+          "selfie-reflection": 4,
+          "front-camera": 12,
+          "tripod-timer": 6,
+          "by-acquaintance": 16,
+          "by-friend-walk": 12,
+          "candid": 14
+        },
+        "choices": {
+          "hairColor": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairLength": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairType": {
+            "mode": "auto",
+            "values": []
+          },
+          "hairStyle": {
+            "mode": "auto",
+            "values": []
+          },
+          "eyeColor": {
+            "mode": "auto",
+            "values": []
+          },
+          "skinTone": {
+            "mode": "auto",
+            "values": []
+          },
+          "build": {
+            "mode": "auto",
+            "values": []
+          },
+          "height": {
+            "mode": "auto",
+            "values": []
+          },
+          "makeup": {
+            "mode": "auto",
+            "values": []
+          },
+          "freckles": {
+            "mode": "auto",
+            "values": []
+          },
+          "glasses": {
+            "mode": "auto",
+            "values": []
+          },
+          "clothingStyle": {
+            "mode": "auto",
+            "values": []
+          },
+          "scene": {
+            "mode": "auto",
+            "values": []
+          },
+          "category": {
+            "mode": "auto",
+            "values": []
+          },
+          "season": {
+            "mode": "auto",
+            "values": []
+          },
+          "weather": {
+            "mode": "auto",
+            "values": []
+          },
+          "time": {
+            "mode": "auto",
+            "values": []
+          },
+          "framing": {
+            "mode": "auto",
+            "values": []
+          },
+          "angle": {
+            "mode": "auto",
+            "values": []
+          },
+          "emotion": {
+            "mode": "auto",
+            "values": []
+          },
+          "posture": {
+            "mode": "auto",
+            "values": []
+          }
+        },
+        "rarity": {
+          "common": 100,
+          "uncommon": 45,
+          "rare": 15
+        },
+        "style": "smartphone",
+        "color": "natural",
+        "sharpness": "sharp",
+        "length": "standard",
+        "detailLevel": "medium",
+        "spontaneity": 55,
+        "randomness": 50,
+        "imperfections": true,
+        "profile": "universal",
+        "includeNegative": true,
+        "showRussian": false,
+        "dupWindow": 50,
+        "seriesLength": 6,
+        "seriesTheme": "auto",
+        "batchCount": 10,
+        "historyLimit": 500,
+        "locks": []
+      }
+    }
+  ]
+}

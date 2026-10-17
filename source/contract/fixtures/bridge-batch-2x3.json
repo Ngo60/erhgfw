@@ -1,0 +1,247 @@
+{
+  "schema": "rps-batch/1",
+  "batch_id": "RPS-44355ce711",
+  "created_at": "2026-10-17T12:00:00.000Z",
+  "source": {
+    "app": "RealPhoto Prompt Studio",
+    "engine": "1.0.0",
+    "bridge": 1,
+    "origin": "https://promts.vibecods.xyz",
+    "kind": "bridge"
+  },
+  "spec": {
+    "mode": "multi",
+    "characters": 2,
+    "frames_per_character": 3,
+    "strategy": "character",
+    "preset_id": "natural-selfie",
+    "seed": "RP-FIXTURE1",
+    "profile": "gpt-image",
+    "length": "standard",
+    "include_negative": true,
+    "use_site_character": false
+  },
+  "characters": [
+    {
+      "character_id": "RPS-44355ce711-C001",
+      "index": 1,
+      "name": "Персонаж 1",
+      "seed": "RP-FIXTURE1~c001",
+      "identity": {
+        "core": {
+          "age": 26,
+          "hairColor": "black",
+          "hairLength": "long",
+          "hairType": "curly",
+          "eyeColor": "dark-brown",
+          "skinTone": "deep-brown",
+          "build": "slim",
+          "height": "average",
+          "freckles": "pronounced",
+          "features": [
+            "strong-brows",
+            "uneven-eyebrows"
+          ]
+        },
+        "fingerprint": "a593483ddc60b4fc902de1201fb20a57a1bd877f5ca06af55cd65f9ee56d7e22",
+        "fingerprint_alg": "sha256-canonical-json"
+      },
+      "notes": [],
+      "jobs": [
+        {
+          "image_job_id": "RPS-44355ce711-C001-F001",
+          "index": 1,
+          "prompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 26 years old, with long curly black hair with soft bangs, dark brown eyes, deep brown skin with natural texture and pronounced freckles across her nose and cheeks. She has a slim build and is of average height, with slightly uneven eyebrows and strong, naturally thick eyebrows, and light everyday makeup. She is stopping on the trail to look up into the branches overhead on a narrow forest trail winding between tall tree trunks, with roots crossing the path. Taken with the camera propped on a stable surface and triggered by a self-timer, a few steps away from her. Framed from the waist up, seen from the side. She wears a bottle green lightweight fleece jacket, a long-sleeved base top, hiking trousers and leather hiking boots, along with sunglasses and a worn canvas backpack on her shoulders. She has a calm, friendly expression, glancing off to the side. It is in the morning in autumn, under a clear sky. Lighting: clear, slightly cool morning light, with patchy light filtering down through the tree canopy onto the trail. In the foreground there is a few fallen twigs and a half-buried stone at the trail edge. Behind her are tall tree trunks with scarred bark standing close on both sides, and farther back a small gap of open sky far down the trail. She is the only person in the frame. Small details: dark soil showing between the roots where the surface is worn smooth and worn corners on the closest objects. Unretouched, true-to-life skin and fabrics, believable proportions and consistent shadows. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a vertical (portrait-orientation) 9:16 frame; keep her head and hands fully inside the frame with comfortable margins.\n\nAvoid: plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters.",
+          "negative": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters",
+          "styling": {
+            "hairStyle": "bangs",
+            "makeup": "everyday",
+            "glasses": "sunglasses"
+          },
+          "params": {
+            "scenario_id": "nature-forest-trail-roots~1tcvj9w",
+            "seed": "RP-FIXTURE1~c001-1",
+            "mode": "character",
+            "scene_id": "nature-forest-trail-roots",
+            "category": "nature",
+            "season": "autumn",
+            "weather": "clear",
+            "time": "morning",
+            "capture": "tripod-timer",
+            "framing": "waist-up",
+            "angle": "side",
+            "emotion": "calm-friendly",
+            "aspect_ratio": "9:16",
+            "fingerprint": "1tcvj9w"
+          },
+          "reference": null
+        },
+        {
+          "image_job_id": "RPS-44355ce711-C001-F002",
+          "index": 2,
+          "prompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 26 years old, with long curly black hair tied back in a ponytail, dark brown eyes, deep brown skin with natural texture and pronounced freckles across her nose and cheeks. She has a slim build and is of average height, with slightly uneven eyebrows and strong, naturally thick eyebrows, and light everyday makeup. She is weighing a bunch of herbs in her hand between stalls at an open-air street market with crates of produce. Photographed by an acquaintance a few steps away who asked her to pause for a second; the photographer is not in the frame. Framed as a head-and-shoulders portrait, seen at eye level. She wears a peach hooded waterproof jacket over a cotton t-shirt, dark jeans and rubber boots, along with sunglasses, a simple wristwatch and a small crossbody bag. She has a natural laugh, turned toward the camera. It is in the middle of the day in summer, under a partly cloudy sky. Lighting: bright daylight shifting as clouds pass, with open sky light filtered by the stall awnings. In the foreground there is a metal scale with a tray of fruit. Behind her are shoppers browsing in a loose line, and farther back a street of old shopfronts behind the stalls. She is the only main subject; a few unposed passers-by appear small and far behind her. Small details: crushed stems and leaves scattered underfoot and tiny flecks of lint caught on the fabric. Natural skin texture with visible pores and fine hairs, no beauty retouching, ordinary believable surroundings. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a vertical (portrait-orientation) 2:3 frame; keep her head and hands fully inside the frame with comfortable margins.\n\nAvoid: plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, a second main subject, heavy color filters.",
+          "negative": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, a second main subject, heavy color filters",
+          "styling": {
+            "hairStyle": "ponytail",
+            "makeup": "everyday",
+            "glasses": "sunglasses"
+          },
+          "params": {
+            "scenario_id": "city-street-market-crates~12lqg12",
+            "seed": "RP-FIXTURE1~c001-2",
+            "mode": "character",
+            "scene_id": "city-street-market-crates",
+            "category": "city",
+            "season": "summer",
+            "weather": "partly-cloudy",
+            "time": "day",
+            "capture": "by-acquaintance",
+            "framing": "portrait",
+            "angle": "eye-level",
+            "emotion": "laugh",
+            "aspect_ratio": "2:3",
+            "fingerprint": "12lqg12"
+          },
+          "reference": null
+        },
+        {
+          "image_job_id": "RPS-44355ce711-C001-F003",
+          "index": 3,
+          "prompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 26 years old, with long curly black hair with soft bangs, dark brown eyes, deep brown skin with natural texture and pronounced freckles across her nose and cheeks. She has a slim build and is of average height, with slightly uneven eyebrows and strong, naturally thick eyebrows, and no visible makeup. She is twirling on the spot with her arms out in the middle of a living room with the sofa pushed back and a tall mirror leaning on the wall. Taken by an acquaintance standing a few steps away, who said \"hold on a moment\"; the photographer is not in the frame. Framed from the waist up, seen with a slightly tilted, dynamic handheld framing. She wears a classic blue denim jacket over a steel blue cotton t-shirt, black jeans and leather sneakers, along with a worn canvas backpack on her shoulders and small hoop earrings. Her attention on what she is doing, she has a thoughtful, absorbed expression. It is in the morning in winter, with wet streets and a clearing sky outside the window. Lighting: clean, slightly cool morning light, with even light from the living-room window across the cleared floor. In the foreground there is a small speaker on a low shelf beside a tangle of cable. Behind her are a sofa pushed back toward the wall with cushions slipping off, and farther back a doorway into the kitchen. She is the only person in the frame. Small details: a charging cable stretched taut from the speaker to the wall socket and slightly mismatched textures where old and new materials meet. Real-world imperfections stay in: uneven skin tone, creases in the clothes, objects that were not arranged for the camera. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a square 1:1 frame; keep her head and hands fully inside the frame with comfortable margins.\n\nAvoid: plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters.",
+          "negative": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters",
+          "styling": {
+            "hairStyle": "bangs",
+            "makeup": "none",
+            "glasses": "none"
+          },
+          "params": {
+            "scenario_id": "home-living-dancing-mirror~0kabv13",
+            "seed": "RP-FIXTURE1~c001-3",
+            "mode": "character",
+            "scene_id": "home-living-dancing-mirror",
+            "category": "home",
+            "season": "winter",
+            "weather": "after-rain",
+            "time": "morning",
+            "capture": "by-acquaintance",
+            "framing": "waist-up",
+            "angle": "dynamic-tilt",
+            "emotion": "thoughtful",
+            "aspect_ratio": "1:1",
+            "fingerprint": "0kabv13"
+          },
+          "reference": null
+        }
+      ]
+    },
+    {
+      "character_id": "RPS-44355ce711-C002",
+      "index": 2,
+      "name": "Персонаж 2",
+      "seed": "RP-FIXTURE1~c002",
+      "identity": {
+        "core": {
+          "age": 31,
+          "hairColor": "dark-brown",
+          "hairLength": "long",
+          "hairType": "wavy",
+          "eyeColor": "brown",
+          "skinTone": "olive",
+          "build": "full-figured",
+          "height": "average",
+          "freckles": "none",
+          "features": []
+        },
+        "fingerprint": "120242c91b2532cd0019e09ee265745c447d986b42f7eeca729d44d3ca3cfcf3",
+        "fingerprint_alg": "sha256-canonical-json"
+      },
+      "notes": [],
+      "jobs": [
+        {
+          "image_job_id": "RPS-44355ce711-C002-F001",
+          "index": 1,
+          "prompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 31 years old, with long wavy dark brown hair piled into a loose messy bun, brown eyes and olive skin with natural texture. She has a full-figured build and is of average height, and minimal natural makeup. She is sitting on a step stool with a book on her knee between tall shelves in a small second-hand bookshop. Shot with a phone on a small tripod using the self-timer, the camera standing a few steps from her. Framed from the waist up, seen from a three-quarter angle. She wears a rust cotton wrap skirt, a plain white t-shirt and leather sandals, along with a thin chain necklace and a worn canvas backpack on her shoulders. She has a playful half-smile, looking straight into the lens. It is in the middle of the day in spring, with a breezy day outside the window. Lighting: bright, restless daylight as clouds move quickly, with soft light from the shop window. In the foreground there is a trolley of unsorted paperbacks. Behind her are a cardboard divider between sections, and farther back a counter with an old brass till. She is the only person in the frame. Small details: a faded bookmark sticking out of a spine and a faint ring left by a cup on a table surface. Real-world imperfections stay in: uneven skin tone, creases in the clothes, objects that were not arranged for the camera. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a vertical (portrait-orientation) 9:16 frame; keep her head and hands fully inside the frame with comfortable margins.\n\nAvoid: plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters.",
+          "negative": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters",
+          "styling": {
+            "hairStyle": "messy-bun",
+            "makeup": "minimal",
+            "glasses": "none"
+          },
+          "params": {
+            "scenario_id": "city-bookshop-secondhand-aisle~05ji7wx",
+            "seed": "RP-FIXTURE1~c002-1",
+            "mode": "character",
+            "scene_id": "city-bookshop-secondhand-aisle",
+            "category": "city",
+            "season": "spring",
+            "weather": "windy",
+            "time": "day",
+            "capture": "tripod-timer",
+            "framing": "waist-up",
+            "angle": "three-quarter",
+            "emotion": "playful",
+            "aspect_ratio": "9:16",
+            "fingerprint": "05ji7wx"
+          },
+          "reference": null
+        },
+        {
+          "image_job_id": "RPS-44355ce711-C002-F002",
+          "index": 2,
+          "prompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 31 years old, with long wavy dark brown hair piled into a loose messy bun, brown eyes and olive skin with natural texture. She has a full-figured build and is of average height, and minimal natural makeup. She is standing with her head tilted back to follow a trunk up to the crown in a tall pine forest with straight trunks and a floor thickly covered in fallen needles. Shot with a phone on a small tripod using the self-timer, the camera standing a few steps from her. Framed from the waist up, seen from the side. She wears a steel blue hooded raincoat over a knit dress, with opaque tights and leather ankle boots, along with a worn canvas backpack on her shoulders. Looking toward the camera, she has a calm, friendly expression. It is in the morning in autumn, under a flat gray overcast sky. Lighting: flat, low-contrast morning light, with shaded light from the high canopy reaching down between the trunks. In the foreground there is a rough pine trunk with flaking plates of bark. Behind her are a sandy path winding between the trees, and farther back a high canopy of dark green needles far overhead. She is the only person in the frame. Small details: a fallen branch with brown needles still attached and soft, uneven shadow edges where objects meet the surface beneath them. Real-world imperfections stay in: uneven skin tone, creases in the clothes, objects that were not arranged for the camera. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a vertical (portrait-orientation) 9:16 frame; keep her head and hands fully inside the frame with comfortable margins.\n\nAvoid: plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters.",
+          "negative": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters",
+          "styling": {
+            "hairStyle": "messy-bun",
+            "makeup": "minimal",
+            "glasses": "none"
+          },
+          "params": {
+            "scenario_id": "nature-pine-forest-needle-floor~1ysuppn",
+            "seed": "RP-FIXTURE1~c002-2",
+            "mode": "character",
+            "scene_id": "nature-pine-forest-needle-floor",
+            "category": "nature",
+            "season": "autumn",
+            "weather": "overcast",
+            "time": "morning",
+            "capture": "tripod-timer",
+            "framing": "waist-up",
+            "angle": "side",
+            "emotion": "calm-friendly",
+            "aspect_ratio": "9:16",
+            "fingerprint": "1ysuppn"
+          },
+          "reference": null
+        },
+        {
+          "image_job_id": "RPS-44355ce711-C002-F003",
+          "index": 3,
+          "prompt": "A photorealistic, everyday smartphone photo of a fictional adult woman, 31 years old, with long wavy dark brown hair tied back in a ponytail, brown eyes and olive skin with natural texture. She has a full-figured build and is of average height, and minimal natural makeup. She is sliding open one of the glass panels with both hands on a glazed loggia with a small armchair, a folding table and rows of plant pots. Taken by an acquaintance standing a few steps away, who said \"hold on a moment\"; the photographer is not in the frame. Framed full-length with her feet and the ground in view, seen from a three-quarter angle. She wears a long steel blue knit cardigan, a white t-shirt, wide-leg jeans and low leather sneakers, along with a worn canvas backpack on her shoulders and a plain baseball cap. She has a light natural smile, her attention on what she is doing. It is in the morning in winter, on a breezy day. Lighting: bright, restless morning light as clouds move quickly, with soft light passing through the glass panels onto the armchair. Foreground: a folding table holding a mug and a plate of biscuits. Middle distance: rows of plant pots along a wide sill, a tall cactus beside a trailing ivy. In the background: the facade of the neighbouring building with rows of balconies. She is the only person in the frame. Small details: a plant pot with a cracked rim standing on a chipped saucer and a small repair that does not quite match its surroundings. Natural skin texture with visible pores and fine hairs, no beauty retouching, ordinary believable surroundings. The background stays clear and readable, without artificial blur. Natural colors with no filters. Composed for a vertical (portrait-orientation) 3:4 frame; keep her whole figure, including head, hands and feet, fully inside the frame with comfortable margins.\n\nAvoid: plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters.",
+          "negative": "plastic skin, excessive beauty retouching, airbrushed face, distorted hands, extra fingers, fused fingers, warped architecture, inconsistent shadows, duplicate limbs, extra limbs, text artifacts, watermarks, logos, oversaturated colors, HDR look, cartoon, illustration, 3D render, deformed eyes, fake bokeh, artificial background blur, second person in the frame, heavy color filters",
+          "styling": {
+            "hairStyle": "ponytail",
+            "makeup": "minimal",
+            "glasses": "none"
+          },
+          "params": {
+            "scenario_id": "home-loggia-glazed-armchair~09tdrpq",
+            "seed": "RP-FIXTURE1~c002-3",
+            "mode": "character",
+            "scene_id": "home-loggia-glazed-armchair",
+            "category": "home",
+            "season": "winter",
+            "weather": "windy",
+            "time": "morning",
+            "capture": "by-acquaintance",
+            "framing": "full-body",
+            "angle": "three-quarter",
+            "emotion": "natural-smile",
+            "aspect_ratio": "3:4",
+            "fingerprint": "09tdrpq"
+          },
+          "reference": null
+        }
+      ]
+    }
+  ]
+}
