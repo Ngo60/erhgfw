@@ -92,6 +92,7 @@ export const ru = {
   'runner.halted.BROWSER_RESTART': 'Очередь приостановлена после перезапуска Chrome. Нажмите «Продолжить».',
   'runner.halted.EXTENSION_UPDATE': 'Очередь приостановлена после обновления расширения. Нажмите «Продолжить».',
   'runner.halted.other': 'Очередь остановлена ({reason}).',
+  'runner.halted.generic': 'Очередь остановлена.',
 
   'block.code': 'Код: {code}',
   'block.hint.CAPTCHA': 'ChatGPT просит пройти проверку (CAPTCHA). Пройдите её вручную во вкладке ChatGPT и нажмите «Продолжить». Расширение CAPTCHA не обходит.',
