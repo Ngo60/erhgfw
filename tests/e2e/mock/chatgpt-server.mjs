@@ -120,8 +120,10 @@ export async function startMockChatGpt({ port = 0, certs, log = false, defaults:
     uiChanged: st.toggles.uiChanged,
   });
 
-  function pushUser(conv, text) {
-    conv.turns.push({ id: 't_' + uuid(), role: 'user', text, msgId: uuid(), rev: 1 });
+  // The page names its optimistic user turn; adopting those ids keeps the DOM node stable across the round trip.
+  const clientId = (v) => (typeof v === 'string' && /^[\w-]{1,64}$/.test(v) ? v : null);
+  function pushUser(conv, text, ids = {}) {
+    conv.turns.push({ id: clientId(ids.turn_id) ?? 't_' + uuid(), role: 'user', text, msgId: clientId(ids.message_id) ?? uuid(), rev: 1 });
   }
   function pushText(conv, text) {
     conv.turns.push({ id: 't_' + uuid(), role: 'assistant', kind: 'text', text, msgId: uuid(), rev: 1 });
@@ -269,7 +271,7 @@ export async function startMockChatGpt({ port = 0, certs, log = false, defaults:
     const wanted = typeof body.conv_id === 'string' && body.conv_id ? body.conv_id : null;
     const conv = (wanted && st.conversations.get(wanted)) || newConv(wanted ?? undefined);
     if (conv.running) return [409, { error: 'generation in progress' }];
-    pushUser(conv, text);
+    pushUser(conv, text, body);
     const beh = startGeneration(conv, nextBehaviour(), text);
     st.sends.push({ conv_id: conv.id, text, mode: beh.mode, at: Date.now() });
     return [200, { conv_id: conv.id }];
