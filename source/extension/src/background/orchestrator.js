@@ -5,18 +5,20 @@ import { analyzeSnapshot } from '../lib/chatgpt-classify.js';
 import { ACTIVE_STATES, ERR, errInfo, IN_FLIGHT, LIMITS } from '../lib/constants.js';
 import { AdapterError, CommandError } from '../lib/errors.js';
 import { assertTransition, IllegalTransition } from '../lib/fsm.js';
-import { sha256Hex, sniffImage } from '../lib/image.js';
 import { buildCharacterJson, buildManifest, buildPromptsJsonl, dataUrl, logToCsv, logToJson } from '../lib/metadata.js';
 import { batchFolderName, batchMetaPath, characterMetaPath, imagePath, localDateStamp, sanitizeRoot } from '../lib/naming.js';
 import { composePrompt, promptKey } from '../lib/prompt.js';
 import { computeTotals, createBatchState, hasPendingWork, nextCounter, pickNextJob } from '../lib/queue.js';
 import { backoffMs, networkBackoffMs } from '../lib/retry.js';
 import { defaultRunner } from '../lib/store.js';
-import { sanitizeSettings } from '../lib/validate.js';
+import { isChatGptUrl, sanitizeSettings } from '../lib/validate.js';
 
 const SLICE_MS = 20_000;
 /** Ошибки скачивания: повтор берёт уже найденные изображения и не запускает новую генерацию. */
 const REDOWNLOAD_CODES = ['DOWNLOAD_FAILED', 'SIZE_MISMATCH', 'FETCH_FAILED'];
+/** HTTP-статусы «ссылка на изображение больше не действует»: изображение ищется в беседе заново, а не генерируется повторно. */
+const GONE_STATUSES = [401, 403, 404, 410];
+const RELOCATE_DELAY_MS = 1500;
 const iso = (ms) => new Date(ms).toISOString();
 const ev = (level, code, message, data) => ({ level, code, message, ...(data ? { data } : {}) });
 
@@ -415,13 +417,15 @@ export class Orchestrator {
     if (this.#stale(r0)) return true;
 
     const resumeDownload = job.resume_from === 'downloading' && job.candidates?.length;
+    // Поиск уже отправленного промпта (relocate): беседа известна по метке отправки либо это текущая беседа того же персонажа.
+    const chatUrl = job.submitted?.chat_url ?? (job.relocate ? this.#knownChatUrl(job, r0) : null);
     let chat = { ...(r0.chat ?? {}), tabId: tab.tabId };
     try {
-      if (!job.submitted && !resumeDownload && this.#needNewChat(job, r0, s)) {
+      if (!job.submitted && !resumeDownload && !chatUrl && this.#needNewChat(job, r0, s)) {
         await this.d.page.openChat(tab.tabId, s.chatStartUrl);
         chat = { tabId: tab.tabId, characterId: job.character_id, framesInChat: 0, url: null };
-      } else if (job.submitted?.chat_url && tab.url && tab.url !== job.submitted.chat_url) {
-        await this.d.page.openChat(tab.tabId, job.submitted.chat_url);
+      } else if (chatUrl && tab.url && tab.url !== chatUrl) {
+        await this.d.page.openChat(tab.tabId, chatUrl);
       }
       if (!resumeDownload) {
         const snap = await this.d.page.snapshot(tab.tabId);
@@ -455,6 +459,11 @@ export class Orchestrator {
     return true;
   }
 
+  #knownChatUrl(job, r) {
+    const c = r.chat;
+    return c?.characterId === job.character_id && typeof c.url === 'string' && isChatGptUrl(c.url) ? c.url : null;
+  }
+
   #needNewChat(job, r, s) {
     if (s.newChatPerCharacter && r.chat?.characterId !== job.character_id) return true;
     if (s.rotateChatEvery > 0 && (r.chat?.framesInChat ?? 0) >= s.rotateChatEvery) return true;
@@ -478,26 +487,27 @@ export class Orchestrator {
     const text = composePrompt(job, s);
     const key = promptKey(text);
     const tabId = r0.chat.tabId;
+    const relocating = job.relocate === true;
     try {
-      if (job.submitted || job.attempts > 1) {
+      if (job.submitted || job.attempts > 1 || relocating) {
         const find = () => this.d.page.locate(tabId, { key, minSide: s.minImageSide, usedKeys: this.#usedKeys(batch.batch_id) });
         let loc = await find();
         // После перехода в беседу сообщения рисуются не сразу: промпт, который точно отправлялся, ищем до 12 с.
-        for (let i = 0; i < 8 && !loc.found && job.submitted; i++) {
+        for (let i = 0; i < 8 && !loc.found && (job.submitted || relocating); i++) {
           await this.d.sleep(1500);
           if (this.#stale(r0)) return true;
           loc = await find();
         }
         if (this.#stale(r0)) return true;
         if (loc.found && loc.images?.length) {
-          await this.#go('downloading', { job, jobStatus: 'downloading', jobPatch: { candidates: loc.images, downloads: null, resume_from: 'downloading' }, events: [ev('info', 'REATTACH', 'Изображение найдено в беседе — повторная отправка не нужна')] });
+          await this.#go('downloading', { job, jobStatus: 'downloading', jobPatch: { candidates: loc.images, downloads: null, resume_from: 'downloading', relocate: false }, events: [ev('info', 'REATTACH', relocating ? 'Изображение найдено в беседе заново — повторная генерация не нужна' : 'Изображение найдено в беседе — повторная отправка не нужна')] });
           return true;
         }
-        if (loc.found && (job.submitted || loc.generating)) {
+        if (loc.found && (job.submitted || loc.generating || relocating)) {
           await this.#go('waiting', {
             job,
             jobStatus: 'waiting',
-            jobPatch: job.submitted ? {} : { submitted: { at: iso(this.now()), token: `${job.image_job_id}#${job.submit_seq ?? 0}`, baseline: null, chat_url: loc.url ?? null, user_turn_index: loc.userTurnIndex ?? null }, error: null },
+            jobPatch: job.submitted ? { relocate: false } : { submitted: { at: iso(this.now()), token: `${job.image_job_id}#${job.submit_seq ?? 0}`, baseline: null, chat_url: loc.url ?? null, user_turn_index: loc.userTurnIndex ?? null }, error: null, relocate: false },
             runnerPatch: { last_progress_at: this.now(), progress_sig: null },
             events: [ev('info', 'REATTACH', 'Промпт уже отправлен — продолжаю ожидание без повторной отправки')],
           });
@@ -512,7 +522,7 @@ export class Orchestrator {
       await this.#go('waiting', {
         job,
         jobStatus: 'waiting',
-        jobPatch: { submitted: { at: iso(this.now()), token, baseline: res.baseline ?? null, chat_url: res.url ?? null, user_turn_index: res.userTurnIndex ?? null, unverified: res.unverified === true }, error: null },
+        jobPatch: { submitted: { at: iso(this.now()), token, baseline: res.baseline ?? null, chat_url: res.url ?? null, user_turn_index: res.userTurnIndex ?? null, unverified: res.unverified === true }, error: null, relocate: false },
         runnerPatch: { last_progress_at: this.now(), progress_sig: null, chat: { ...r0.chat, url: res.url ?? r0.chat.url } },
         events: [res.unverified ? ev('warn', 'SUBMITTED_UNVERIFIED', 'Промпт, по-видимому, отправлен, но расширение не видит его в беседе — жду подтверждения; повторно отправлять не буду.') : ev('info', 'SUBMITTED', 'Промпт отправлен в ChatGPT')],
       });
@@ -610,39 +620,78 @@ export class Orchestrator {
       return true;
     }
     const downloads = [...(job.downloads ?? [])];
+    let cur = null;
     try {
       for (const [k, cand] of choice.list.entries()) {
         if (downloads[k]?.state === 'complete') continue;
-        const fetched = await this.d.images.fetch(cand.src);
-        const info = sniffImage(fetched.bytes);
-        if (!info) throw new AdapterError('UNSUPPORTED_IMAGE_FORMAT', 'Не удалось определить формат изображения.');
-        if (s.minImageSide > 0 && Math.min(info.width, info.height) < s.minImageSide) {
-          throw new AdapterError('PREVIEW_ONLY', `Размер ${info.width}×${info.height} меньше минимума ${s.minImageSide}px`);
+        cur = cand;
+        const fetched = await this.d.images.fetch(cand.src, { tabId: r0.chat?.tabId ?? null });
+        try {
+          const info = fetched.info;
+          if (!info) throw new AdapterError('UNSUPPORTED_IMAGE_FORMAT', 'Не удалось определить формат изображения.');
+          if (s.minImageSide > 0 && Math.min(info.width, info.height) < s.minImageSide) {
+            throw new AdapterError('PREVIEW_ONLY', `Размер ${info.width}×${info.height} меньше минимума ${s.minImageSide}px`);
+          }
+          const sha = fetched.sha256;
+          const owner = this.#dupOwner(batch.batch_id, sha, job.image_job_id);
+          if (owner) {
+            job = await this.#putJob(job, { rejected_keys: [...(job.rejected_keys ?? []), cand.key] });
+            throw new AdapterError('DUPLICATE_IMAGE', `Это изображение уже сохранено для ${owner}`);
+          }
+          if (fetched.recoded) {
+            await st.commit({ events: [{ batch_id: batch.batch_id, job_id: job.image_job_id, state: 'downloading', ...ev('warn', 'IMAGE_RECODED', 'изображение перекодировано (оригинал недоступен)') }] });
+          }
+          const filename = imagePath({ root: batch.root, batchFolder: batch.folder, characterIndex: job.character_index, frameIndex: job.index, format: info.format, variant: k + 1 });
+          const id = await this.d.downloads.start({ url: fetched.downloadUrl ?? cand.src, filename, conflictAction: 'overwrite' });
+          downloads[k] = { key: cand.key, filename, id, bytes: fetched.size, sha256: sha, format: info.format, width: info.width, height: info.height, state: 'started', ...(fetched.recoded ? { recoded: true } : {}) };
+          job = await this.#putJob(job, { downloads });
+          await this.d.downloads.waitComplete(id, 120_000);
+          downloads[k] = { ...downloads[k], state: 'complete' };
+          job = await this.#putJob(job, { downloads });
+          if (this.#stale(r0)) return true;
+        } finally {
+          // Копия blob: нужна Chrome до конца загрузки; после — освобождаем (даже при ошибке).
+          try {
+            await fetched.release?.();
+          } catch {
+            // освобождение не должно ронять задание: копия сама отзовётся по таймеру
+          }
         }
-        const sha = await sha256Hex(fetched.bytes);
-        const owner = this.#dupOwner(batch.batch_id, sha, job.image_job_id);
-        if (owner) {
-          job = await this.#putJob(job, { rejected_keys: [...(job.rejected_keys ?? []), cand.key] });
-          throw new AdapterError('DUPLICATE_IMAGE', `Это изображение уже сохранено для ${owner}`);
-        }
-        const filename = imagePath({ root: batch.root, batchFolder: batch.folder, characterIndex: job.character_index, frameIndex: job.index, format: info.format, variant: k + 1 });
-        const id = await this.d.downloads.start({ url: cand.src, filename, conflictAction: 'overwrite' });
-        downloads[k] = { key: cand.key, filename, id, bytes: fetched.bytes.length, sha256: sha, format: info.format, width: info.width, height: info.height, state: 'started' };
-        job = await this.#putJob(job, { downloads });
-        await this.d.downloads.waitComplete(id, 120_000);
-        downloads[k] = { ...downloads[k], state: 'complete' };
-        job = await this.#putJob(job, { downloads });
-        if (this.#stale(r0)) return true;
       }
     } catch (e) {
       if (this.#stale(r0)) return true;
-      if (e instanceof AdapterError && e.code === 'FETCH_FAILED' && [401, 403, 404, 410].includes(e.status)) {
-        job = await this.#putJob(job, { candidates: null, downloads: null, resume_from: null, submitted: null });
-      }
+      if (e instanceof AdapterError && e.code === 'FETCH_FAILED' && this.#sourceGone(e, cur)) return this.#relocate(e, job);
       await this.#handleError(e, { job });
       return true;
     }
     await this.#go('verifying', { job, jobStatus: 'verifying', jobPatch: { downloads }, events: [ev('info', 'DOWNLOADED', `Файлов сохранено: ${downloads.length}`)] });
+    return true;
+  }
+
+  /** Адрес изображения мёртв: HTTP 401/403/404/410 либо blob: не читается (страница перезагружена, адрес отозван). */
+  #sourceGone(err, cand) {
+    return GONE_STATUSES.includes(err.status) || (err.status === undefined && /^blob:/i.test(cand?.src ?? ''));
+  }
+
+  /**
+   * Промпт уже отправлен и изображение есть в беседе — просто ссылка устарела. Кандидаты сбрасываются, метка отправки остаётся,
+   * флаг relocate заставляет следующий проход найти сообщение по ключу и взять свежие элементы изображения (повторной генерации нет).
+   * Расходует download_attempts; после лимита задание становится ошибочным, а «Повторить ошибки» снова идёт этим же путём.
+   */
+  async #relocate(err, job) {
+    const st = this.store;
+    const used = (job.download_attempts ?? 0) + 1;
+    const detail = err?.message && err.message !== err.code ? err.message : errInfo('FETCH_FAILED').ru;
+    const gone = { candidates: null, downloads: null, resume_from: null, relocate: true, download_attempts: used };
+    if (used >= st.settings.maxAttempts) return this.#failJob('FETCH_FAILED', `${detail} (попытки исчерпаны: ${used})`, { ...job, ...gone });
+    const retryAt = this.now() + RELOCATE_DELAY_MS;
+    await this.#go('retryable_error', {
+      job,
+      jobStatus: 'retryable_error',
+      jobPatch: { ...gone, error: { code: 'FETCH_FAILED', message: detail }, retry_at: retryAt },
+      runnerPatch: { retry_at: retryAt, job_id: job.image_job_id },
+      events: [ev('warn', 'FETCH_FAILED', `${detail} Изображение будет найдено в беседе заново, без повторной генерации (попытка ${used} из ${st.settings.maxAttempts})`)],
+    });
     return true;
   }
 
@@ -672,11 +721,11 @@ export class Orchestrator {
     if (this.#stale(r0)) return true;
     const t = this.now();
     const first = downloads[0];
-    const result = { file: first.filename, files: downloads.map((d) => d.filename), bytes: first.bytes, format: first.format, width: first.width, height: first.height, sha256: first.sha256, hashes: downloads.map((d) => d.sha256), keys: downloads.map((d) => d.key), download_id: first.id, saved_at: iso(t) };
+    const result = { file: first.filename, files: downloads.map((d) => d.filename), bytes: first.bytes, format: first.format, width: first.width, height: first.height, sha256: first.sha256, hashes: downloads.map((d) => d.sha256), keys: downloads.map((d) => d.key), download_id: first.id, saved_at: iso(t), ...(downloads.some((d) => d.recoded) ? { recoded: true } : {}) };
     await this.#go('completed', {
       job,
       jobStatus: 'completed',
-      jobPatch: { result, error: null, completed_at: iso(t), submitted: null, candidates: null, resume_from: null },
+      jobPatch: { result, error: null, completed_at: iso(t), submitted: null, candidates: null, resume_from: null, relocate: false },
       runnerPatch: { next_allowed_at: t + s.intervalSec * 1000, policy_streak: 0, network_since: 0, network_failures: 0, chat: { ...r0.chat, framesInChat: (r0.chat?.framesInChat ?? 0) + 1 } },
       events: [ev('info', 'JOB_DONE', `Сохранено: ${result.file} (${result.width}×${result.height}, ${result.bytes} Б)`)],
     });
@@ -798,7 +847,7 @@ export class Orchestrator {
     await this.#go('blocked', {
       job: cur,
       jobStatus: cur && IN_FLIGHT.has(cur.status) ? 'pending' : cur?.status,
-      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...(keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1) }), ...jobExtra } : {},
+      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...(keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1), relocate: false }), ...jobExtra } : {},
       runnerPatch: { block: { code, message, at: iso(this.now()) }, pause_requested: false, job_id: cur?.image_job_id ?? this.store.runner.job_id },
       events: [ev('error', code, message)],
     });
@@ -814,7 +863,7 @@ export class Orchestrator {
     await this.#go('blocked', {
       job,
       jobStatus: 'failed',
-      jobPatch: { error: { code, message: info.ru }, completed_at: iso(t), submitted: null, candidates: null, downloads: null, resume_from: null, not_visible: 0 },
+      jobPatch: { error: { code, message: info.ru }, completed_at: iso(t), submitted: null, candidates: null, downloads: null, resume_from: null, not_visible: 0, relocate: false },
       runnerPatch: { block: { code, message, at: iso(t) }, pause_requested: false, job_id: job.image_job_id },
       events: [ev('error', code, `Задание помечено ошибочным: ${message}`)],
     });
@@ -853,7 +902,7 @@ export class Orchestrator {
     await this.#go('retryable_error', {
       job,
       jobStatus: 'retryable_error',
-      jobPatch: { error: { code, message: detail }, retry_at: retryAt, submitted: null, ...(redownload ? { download_attempts: used, downloads: null } : { candidates: null, downloads: null, resume_from: null }) },
+      jobPatch: { error: { code, message: detail }, retry_at: retryAt, submitted: null, relocate: false, ...(redownload ? { download_attempts: used, downloads: null } : { candidates: null, downloads: null, resume_from: null }) },
       runnerPatch: { retry_at: retryAt, job_id: job.image_job_id },
       events: [ev('warn', code, `${detail} Повтор через ${Math.round((retryAt - t) / 1000)} с (попытка ${used} из ${st.settings.maxAttempts})`)],
     });
@@ -882,7 +931,8 @@ export class Orchestrator {
       await this.#go('failed', { runnerPatch: { failure_kind: 'fatal', policy_streak: streak }, events: [ev('error', code, message)] });
       return true;
     }
-    const jobPatch = { error: { code, message }, completed_at: iso(t), submitted: null, downloads: null, ...(code === 'MULTIPLE_IMAGES' || REDOWNLOAD_CODES.includes(code) ? {} : { resume_from: null, candidates: null }) };
+    // Задание, у которого не удалось найти изображение заново (relocate), хранит метку отправки: «Повторить ошибки» пойдёт тем же путём.
+    const jobPatch = { error: { code, message }, completed_at: iso(t), submitted: job.relocate ? job.submitted : null, downloads: null, ...(code === 'MULTIPLE_IMAGES' || REDOWNLOAD_CODES.includes(code) ? {} : { resume_from: null, candidates: null, relocate: false }) };
     const stopNow = code === 'CONTENT_POLICY' && streak >= st.settings.stopAfterPolicyRefusals;
     if (stopNow) {
       const text = `Подряд отклонено заданий: ${streak}. Проверьте пресет и промпты. ${errInfo('CONTENT_POLICY').ru}`;

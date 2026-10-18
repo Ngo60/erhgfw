@@ -2,7 +2,7 @@
 // Источники: наблюдаемая разметка chatgpt.com (data-testid/aria-label), публичные описания DOM; проверяется диагностикой
 // «Проверить интерфейс ChatGPT» и тестами на макете. Соответствие реальному интерфейсу нужно подтверждать вручную.
 
-export const SELECTOR_PROFILE = 'chatgpt-2026-10b';
+export const SELECTOR_PROFILE = 'chatgpt-2026-10c';
 
 export const SELECTORS = Object.freeze({
   composer: ['#prompt-textarea', 'div.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][data-virtualkeyboard="true"]', 'textarea[name="prompt-textarea"]', 'form [contenteditable="true"][role="textbox"]'],
@@ -10,8 +10,9 @@ export const SELECTORS = Object.freeze({
   stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]', 'button[aria-label^="Stop"]', 'button[aria-label^="Остановить"]'],
   turn: ['section[data-testid^="conversation-turn-"]', 'article[data-testid^="conversation-turn-"]', '[data-testid^="conversation-turn-"]', 'article[data-turn]', '[data-turn-id]'],
   roleBlock: ['[data-message-author-role]', '[data-message-id]'],
-  // Сгенерированное изображение лежит вне [data-message-author-role] и отдаётся с /backend-api/estuary/content.
-  image: ['img[src*="/backend-api/estuary/content"]', 'img[alt^="Generated image"]', 'img[src*=".oaiusercontent.com/"]'],
+  // Сгенерированное изображение лежит вне [data-message-author-role]; в настоящем ChatGPT это <img src="blob:…"> в обёртках
+  // generated-image-gallery/-preview (наблюдалось в реальном Chrome); прежние признаки (estuary, alt) оставлены.
+  image: ['[data-testid="generated-image-preview"] img', '[data-testid="generated-image-gallery"] img', 'img[src*="/backend-api/estuary/content"]', 'img[alt^="Generated image"]', 'img[src*=".oaiusercontent.com/"]'],
   loginUi: ['[data-testid="login-button"]', '[data-testid="signup-button"]', 'a[href*="/auth/login"]'],
   captchaUi: ['iframe[src*="challenges.cloudflare.com"]', 'iframe[title*="Cloudflare"]', 'iframe[src*="recaptcha"]', 'iframe[src*="hcaptcha"]', '#challenge-stage', '.cf-turnstile'],
   alert: ['[role="alert"]', '[aria-live="assertive"]', '[data-testid*="toast"]'],
