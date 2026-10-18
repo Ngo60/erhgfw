@@ -666,8 +666,11 @@ function patchCharacter(node, c) {
   if (bar.max !== max) bar.max = max;
   if (bar.value !== c.completed) bar.value = c.completed;
   const name = node.querySelector('.character-name');
-  name.hidden = !c.name;
-  setText(name, c.name ? String(c.name) : '');
+  // Имя по умолчанию («Персонаж 1») совпадает с заголовком карточки — второй раз его не показываем.
+  const own = c.name ? String(c.name).trim() : '';
+  const showName = own !== '' && own !== t('character.title', { n: c.index });
+  name.hidden = !showName;
+  setText(name, showName ? own : '');
   setText(node.querySelector('.cc-main'), t('character.counts', { completed: c.completed, total }));
   const failed = node.querySelector('.character-failed');
   failed.hidden = !c.failed;

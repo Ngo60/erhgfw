@@ -357,6 +357,32 @@ export function isChatGptUrl(value) {
   }
 }
 
+/**
+ * Как получать изображение по адресу из страницы: 'https' (хосты ChatGPT/OpenAI — service worker), 'blob' (создан самой страницей
+ * ChatGPT, читается только content script) или 'data' (data:image/…). Всё остальное — 'unsupported'. Для blob: источник (origin)
+ * должен совпадать с pageOrigin.
+ * @returns {{kind:'https'|'blob'|'data'|'unsupported', scheme:string, origin:string|null}}
+ */
+export function classifyImageUrl(value, pageOrigin = null) {
+  let u;
+  try {
+    u = new URL(value);
+  } catch {
+    return { kind: 'unsupported', scheme: 'неизвестна', origin: null };
+  }
+  const info = { scheme: u.protocol, origin: u.origin === 'null' ? null : u.origin };
+  if (u.protocol === 'https:') return { kind: isAllowedImageUrl(value) ? 'https' : 'unsupported', ...info };
+  if (u.protocol === 'blob:') return { kind: pageOrigin !== null && info.origin === pageOrigin ? 'blob' : 'unsupported', ...info };
+  if (u.protocol === 'data:') return { kind: /^data:image\/[a-z0-9.+-]+[;,]/i.test(value) ? 'data' : 'unsupported', ...info };
+  return { kind: 'unsupported', ...info };
+}
+
+/** Для сообщений об ошибках: только схема и источник — без путей, идентификаторов и подписей из адреса. */
+export function describeImageUrl(value) {
+  const c = classifyImageUrl(value);
+  return `схема ${c.scheme}, источник ${c.origin ?? 'не определён'}`;
+}
+
 /** Допустимые URL изображений: только https и хосты ChatGPT/OpenAI (защита от SSRF через сообщения). */
 export function isAllowedImageUrl(value) {
   try {
