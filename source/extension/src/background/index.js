@@ -3,6 +3,7 @@
 import { ACTIVE_STATES } from '../lib/constants.js';
 import { AdapterError, CommandError } from '../lib/errors.js';
 import { cleanCreateParams, validatePanelMessage } from '../lib/messages.js';
+import { siteFailure } from '../lib/site-status.js';
 import { Store } from '../lib/store.js';
 import { parseBatch, parseImport } from '../lib/validate.js';
 import { createChatPage, createDownloads, createImages, createSiteClient } from './adapters.js';
@@ -98,11 +99,14 @@ const viewResp = async () => ({ view: await view() });
 async function siteStatus() {
   try {
     const { tab, res } = await site.call('hello');
-    if (!res?.ok) throw new AdapterError(res?.error?.code ?? 'SITE_ERROR', res?.error?.message ?? 'Мост сайта не отвечает. Сайт нужно обновить (см. docs/04-SERVER-SETUP.md).');
-    const p = res.payload ?? {};
-    lastSite = { connected: true, tabId: tab.id, origin: SITE_ORIGIN, engine: String(p.engine ?? ''), bridge_version: p.bridge_version ?? null, limits: p.limits ?? null, site_character: p.site_character === true, profiles: Array.isArray(p.profiles) ? p.profiles : null, lengths: Array.isArray(p.lengths) ? p.lengths : null };
+    if (!res?.ok) {
+      lastSite = { ...siteFailure({ code: res?.error?.code, message: res?.error?.message }), tabId: tab.id };
+    } else {
+      const p = res.payload ?? {};
+      lastSite = { connected: true, tabFound: true, tabId: tab.id, origin: SITE_ORIGIN, engine: String(p.engine ?? ''), bridge_version: p.bridge_version ?? null, limits: p.limits ?? null, site_character: p.site_character === true, profiles: Array.isArray(p.profiles) ? p.profiles : null, lengths: Array.isArray(p.lengths) ? p.lengths : null };
+    }
   } catch (e) {
-    lastSite = { connected: false, reason: toError(e).message };
+    lastSite = siteFailure(toError(e));
   }
   schedulePush();
   return lastSite;

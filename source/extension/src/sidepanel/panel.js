@@ -380,12 +380,29 @@ function renderHeader(view) {
   const { site, chatgpt } = view;
   if (site.connected) {
     setChip(byId('site-status'), 'ok', 'connected', site.engine ? t('site.connected', { engine: site.engine }) : t('site.connectedNoEngine'));
-  } else setChip(byId('site-status'), 'warn', 'missing', t('site.missing'));
+  } else if (site.code === 'NO_BRIDGE') setChip(byId('site-status'), 'warn', 'no-bridge', t('site.noBridge'));
+  else if (site.code === 'BRIDGE_VERSION') setChip(byId('site-status'), 'warn', 'bridge-version', t('site.bridgeVersion'));
+  else if (site.tabFound) setChip(byId('site-status'), 'warn', 'error', t('site.error'));
+  else setChip(byId('site-status'), 'warn', 'missing', t('site.missing'));
   byId('site-status').title = site.connected || !site.reason ? '' : String(site.reason);
 
   if (chatgpt.tabFound && chatgpt.ready !== false) setChip(byId('chatgpt-status'), 'ok', 'ready', t('chatgpt.ready'));
   else if (chatgpt.tabFound) setChip(byId('chatgpt-status'), 'warn', 'not-ready', t('chatgpt.notReady'));
   else setChip(byId('chatgpt-status'), 'warn', 'missing', t('chatgpt.missing'));
+}
+
+const DIAG_MARK = { ok: '✓', bad: '✕', info: '–', unknown: '?' };
+
+function diagItemState(item) {
+  if (typeof item.state === 'string' && item.state in DIAG_MARK) return item.state;
+  return item.found === true ? 'ok' : 'bad';
+}
+
+function diagStateText(item, state) {
+  if (item.role === 'alarm') return item.found === true ? t('diag.alarmBad') : t('diag.alarmOk');
+  if (state === 'unknown') return t('diag.unknown');
+  if (state === 'info') return t('diag.info');
+  return item.found === true ? t('diag.found') : t('diag.missing');
 }
 
 function renderDiagnose(report) {
@@ -397,18 +414,21 @@ function renderDiagnose(report) {
   }
   const items = Array.isArray(report.items) ? report.items.filter(isObj) : [];
   const notes = Array.isArray(report.notes) ? report.notes.map(String) : [];
+  const states = items.map(diagItemState);
   const ok = report.ok === true;
+  const headText = ok ? t('diag.ok') : states.includes('bad') ? t('diag.fail') : t('diag.partial');
   const close = el('button', { type: 'button', class: 'btn btn-sm', text: t('diag.close') });
   close.addEventListener('click', () => renderDiagnose(null));
   fill(box,
-    el('div', { class: 'diag-head' }, [el('span', { text: ok ? t('diag.ok') : t('diag.fail') }), close]),
+    el('div', { class: 'diag-head' }, [el('span', { text: headText }), close]),
     items.length
-      ? el('ul', { class: 'diag-list' }, items.map((item) => el('li', { class: 'diag-item', dataset: { found: String(item.found === true) } }, spaced(
-        el('span', { class: 'diag-mark', 'aria-hidden': 'true', text: item.found === true ? '✓' : '✕' }),
-        el('span', { class: 'diag-name', text: String(item.name ?? '') }),
-        el('span', { class: 'diag-state', text: item.found === true ? t('diag.found') : t('diag.missing') }),
-        item.count !== undefined && item.count !== null ? el('span', { class: 'muted', text: `(${t('diag.count', { count: item.count })})` }) : null,
+      ? el('ul', { class: 'diag-list' }, items.map((item, i) => el('li', { class: 'diag-item', dataset: { found: String(item.found === true), state: states[i] } }, spaced(
+        el('span', { class: 'diag-mark', 'aria-hidden': 'true', text: DIAG_MARK[states[i]] }),
+        el('span', { class: 'diag-name', text: String(item.label ?? item.name ?? '') }),
+        el('span', { class: 'diag-state', text: diagStateText(item, states[i]) }),
+        item.count !== undefined && item.count !== null && item.role !== 'alarm' ? el('span', { class: 'muted', text: `(${t('diag.count', { count: item.count })})` }) : null,
         item.selector ? el('code', { text: String(item.selector) }) : null,
+        item.note ? el('span', { class: 'muted', text: String(item.note) }) : null,
       ))))
       : el('p', { class: 'muted', text: t('diag.empty') }),
     notes.length ? el('p', { class: 'muted', text: t('diag.notes') }) : null,
@@ -771,7 +791,8 @@ function updateForm() {
   setDisabled('btn-import-test', ui.creating);
   const { site } = ui.view;
   byId('site-hint').hidden = f.mode === 'import' || !!site.connected;
-  setText(byId('site-hint'), site.reason ? `${t('create.siteHint')} ${site.reason}` : t('create.siteHint'));
+  const hintBase = site.code === 'NO_BRIDGE' ? t('create.siteHintNoBridge') : t('create.siteHint');
+  setText(byId('site-hint'), site.reason && site.code !== 'NO_BRIDGE' ? `${hintBase} ${site.reason}` : hintBase);
   document.querySelectorAll('.chip-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.frames === byId('input-frames').value.trim())));
 }
 

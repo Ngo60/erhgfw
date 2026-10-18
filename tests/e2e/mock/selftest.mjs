@@ -271,8 +271,8 @@ async function main() {
     assert.equal(await page.$eval('main > div#thread', (el) => el.children.length), 0);
     assert.equal(await page.$eval('a[data-testid="new-chat-button"]', (a) => a.getAttribute('href') + '|' + a.textContent), '/|New chat');
     assert.equal(await page.$('[data-testid="login-button"], [data-testid="signup-button"]'), null);
-    const send0 = await page.$eval('button[data-testid="send-button"]', (b) => [b.disabled, b.getAttribute('aria-label')]);
-    assert.deepEqual(send0, [true, 'Send prompt']);
+    assert.equal(await page.$('button[data-testid="send-button"]'), null, 'empty composer: no send button (like the real composer)');
+    assert.equal(await page.$eval('button[data-testid="composer-speech-button"]', (b) => b.getAttribute('aria-label')), 'Start voice mode');
 
     await setPrompt(page, PROMPT);
     assert.equal(await textOf(page, '#prompt-textarea'), PROMPT);
@@ -310,7 +310,7 @@ async function main() {
     assert.equal(fetched.type, 'image/png');
     assert.deepEqual(fetched.bytes.slice(0, 4), [0x89, 0x50, 0x4e, 0x47]);
     assert.equal(await page.locator('button[data-testid="stop-button"]').count(), 0, 'stop button gone');
-    assert.equal(await page.$eval('button[data-testid="send-button"]', (b) => b.disabled), true);
+    assert.equal(await page.$('button[data-testid="send-button"]'), null);
     assert.equal(await page.locator('[data-testid^="conversation-turn-"]').count(), 2);
     assert.equal(await page.locator('div.agent-turn').filter({ hasText: 'Creating image' }).count(), 0);
     flowConvPath = new URL(page.url()).pathname;
@@ -368,9 +368,9 @@ async function main() {
     await page.keyboard.press('Backspace');
     await settle();
     assert.equal(await html(), '<p data-placeholder="Ask anything" class="placeholder"><br></p>');
-    assert.equal(await page.$eval('button[data-testid="send-button"]', (b) => b.disabled), true);
+    assert.equal(await page.$('button[data-testid="send-button"]'), null);
     await page.keyboard.type('   ');
-    assert.equal(await page.$eval('button[data-testid="send-button"]', (b) => b.disabled), true, 'whitespace only keeps send disabled');
+    assert.equal(await page.$('button[data-testid="send-button"]'), null, 'whitespace only: still no send button');
     await page.keyboard.press('Control+A');
     await page.keyboard.press('Backspace');
     // synthetic paste with text/plain DataTransfer (what extensions dispatch)
@@ -590,7 +590,7 @@ async function main() {
     assert.equal(await stopButton(page).count(), 0);
     assert.equal(await page.locator('img').count(), 0);
     assert.equal(await page.locator('section[data-turn="assistant"]').count(), 0);
-    assert.equal(await page.locator('button[data-testid="send-button"]').count(), 1);
+    assert.equal(await page.locator('button[data-testid="send-button"]').count(), 0, 'empty composer after the error: no send button');
     chat.setScript(['normal']);
     await page.click('button:has-text("Retry")');
     await waitImages(page, 1);
@@ -786,7 +786,7 @@ async function main() {
       top: true,
     });
     assert.equal(await page.$eval('#prompt-textarea', (e) => e.getAttribute('contenteditable')), 'false');
-    assert.equal(await page.$eval('button[data-testid="send-button"]', (b) => b.disabled), true);
+    assert.equal(await page.$('button[data-testid="send-button"]'), null);
     await page.evaluate(() => document.querySelector('#prompt-textarea').focus());
     await page.keyboard.type('should not appear');
     await page.keyboard.press('Enter');
