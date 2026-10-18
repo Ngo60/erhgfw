@@ -1,4 +1,9 @@
 // HTTPS mock of the ChatGPT web app (chatgpt.com) with scriptable failure modes, for extension e2e tests.
+//
+// Behaviours ({mode, delayMs, size, width, height, text, contentType, times} or just the mode name) are consumed one
+// per prompt from the queue set by setScript(); an empty queue falls back to the defaults (setDefaults()).
+// Modes: see MODES. Toggles (persist until reset()): loggedOut, captcha, uiChanged, offline.
+// Out-of-process control: POST /__ctl {script?, defaults?, reset?, loggedOut?, captcha?, uiChanged?, offline?}, GET /__state.
 import https from 'node:https';
 import crypto from 'node:crypto';
 import { makeCerts } from './certs.mjs';
@@ -272,7 +277,7 @@ export async function startMockChatGpt({ port = 0, certs, log = false, defaults:
     pushUser(conv, text);
     const beh = startGeneration(conv, nextBehaviour(), text);
     st.sends.push({ conv_id: conv.id, text, mode: beh.mode, at: Date.now() });
-    return [200, { conv_id: conv.id }];
+    return [200, { conv_id: conv.id, view: viewOf(conv) }];
   }
 
   function handleRetry(body) {
