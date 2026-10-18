@@ -194,7 +194,7 @@ export function createSiteClient(origin) {
   return {
     async call(type, payload) {
       const tab = await findTab();
-      if (!tab) throw new AdapterError('SITE_NOT_FOUND', `Откройте ${origin}/ в этом окне Chrome.`);
+      if (!tab) throw new AdapterError('NO_TAB', `Откройте ${origin}/ в этом окне Chrome.`);
       const msg = { rps: 1, type: 'SITE_CALL', req: { type, ...(payload !== undefined ? { payload } : {}) } };
       let res;
       try {
@@ -204,7 +204,7 @@ export function createSiteClient(origin) {
           await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/site-bridge.js'] });
           res = await chrome.tabs.sendMessage(tab.id, msg);
         } catch (e) {
-          throw new AdapterError('SITE_NOT_FOUND', `Не удалось связаться со вкладкой сайта: ${String(e?.message ?? e).slice(0, 120)}`);
+          throw new AdapterError('TAB_UNREACHABLE', `Не удалось связаться со вкладкой сайта: ${String(e?.message ?? e).slice(0, 120)}`);
         }
       }
       return { tab, res };
