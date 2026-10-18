@@ -44,7 +44,7 @@ export async function launch({ ext, profile, chatPort, sitePort, debugPort }) {
       `--user-data-dir=${profile}`,
       `--disable-extensions-except=${ext}`,
       `--load-extension=${ext}`,
-      `--host-resolver-rules=MAP chatgpt.com 127.0.0.1:${chatPort}, MAP promts.vibecods.xyz 127.0.0.1:${sitePort}`,
+      `--host-resolver-rules=${[`MAP chatgpt.com 127.0.0.1:${chatPort}`, sitePort ? `MAP promts.vibecods.xyz 127.0.0.1:${sitePort}` : null].filter(Boolean).join(', ')}`,
       '--ignore-certificate-errors',
       '--window-size=1100,900',
       `--remote-debugging-port=${debugPort}`,
