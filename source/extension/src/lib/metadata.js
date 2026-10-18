@@ -28,6 +28,7 @@ export function jobRecord(job) {
     width: r?.width ?? null,
     height: r?.height ?? null,
     sha256: r?.sha256 ?? null,
+    recoded: r?.recoded === true,
     attempts: job.attempts,
     started_at: job.started_at ?? null,
     completed_at: job.completed_at ?? null,
