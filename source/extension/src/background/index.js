@@ -28,7 +28,7 @@ const orch = new Orchestrator({
   clearTimeout: (h) => clearTimeout(h),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   page: chatPage,
-  images: createImages(),
+  images: createImages(chatPage),
   downloads,
   notify,
 });
