@@ -36,15 +36,15 @@
     "run.title": "Текущая партия",
     "batch.none": "Партия не выбрана. Сформируйте очередь на сайте или импортируйте файл.",
     "batch.id": "ID",
-    "batch.kind": "Источник",
+    "batch.kind": "Тип",
     "batch.status": "Статус",
     "batch.folder": "Папка",
     "batch.totals": "Задания",
     "batch.totalsValue": "всего: {total} · готово: {completed} · ошибок: {failed} · ждут: {pending} · в работе: {active}",
-    "batch.kind.site": "сайт",
-    "batch.kind.import": "импорт",
-    "batch.kind.test": "тест",
-    "batch.kind.batch": "партия",
+    "batch.kind.batch": "обычная",
+    "batch.kind.test": "тестовая",
+    "batch.kind.site": "с сайта",
+    "batch.kind.import": "из файла",
     "batch.status.ready": "готова к запуску",
     "batch.status.running": "выполняется",
     "batch.status.stopped": "остановлена",
@@ -113,7 +113,6 @@
     "frame.attempts": "попыток {n}",
     "frame.error": "ошибка {code}",
     "frame.open": "нажмите, чтобы показать файл",
-    "frame.noFile": "файла нет",
     "controls.aria": "Управление очередью",
     "btn.start": "Старт",
     "btn.pause": "Пауза",
@@ -170,6 +169,7 @@
     "btn.create": "Сформировать очередь",
     "btn.testJob": "Тестовое задание",
     "create.pending": "Формирую очередь на сайте… это может занять до 10 секунд",
+    "create.progress": "Формирую очередь на сайте: {done} из {total}",
     "create.siteHint": "Сайт не подключён: откройте promts.vibecods.xyz, затем нажмите «Обновить».",
     "summary.line": "Партия {id}: {characters} × {frames} = {total}. Папка: {folder}",
     "summary.existed": "Такая партия уже есть в очереди",
@@ -463,6 +463,8 @@
     busy: false,
     // выполняется команда управления очередью
     creating: false,
+    siteProgress: null,
+    // { done, total } от сайта, пока он собирает партию
     pausing: false,
     // «Пауза» нажата, worker ещё не подтвердил
     offline: false,
@@ -549,7 +551,7 @@
   function toast(message, kind = "info", code) {
     const box = byId("toast");
     clearTimeout(ui.toastTimer);
-    const close = el("button", { type: "button", class: "toast-close", "aria-label": t("toast.close"), text: "×" });
+    const close = el("button", { type: "button", class: "toast-close", "aria-label": t("toast.close") });
     close.addEventListener("click", clearToast);
     box.className = `toast toast-${kind}`;
     if (code) box.dataset.code = code;
@@ -614,16 +616,21 @@
     }
     ui.port = port;
     if (!port) {
+      ui.portFailures += 1;
       scheduleReconnect();
       return;
     }
     let gotView = false;
     const connectedAt = Date.now();
     port.onMessage.addListener((msg) => {
-      if (isObj(msg) && msg.type === "VIEW" && isObj(msg.view)) {
+      if (!isObj(msg)) return;
+      if (msg.type === "VIEW" && isObj(msg.view)) {
         gotView = true;
         ui.portFailures = 0;
         applyView(msg.view);
+      } else if (msg.type === "SITE_PROGRESS" && ui.creating) {
+        ui.siteProgress = { done: num(msg.done), total: num(msg.total) };
+        renderPending();
       }
     });
     port.onDisconnect.addListener(() => {
@@ -644,7 +651,7 @@
     const view = ui.view;
     renderHeader(view);
     renderQueue(view);
-    syncSettings(view.settings);
+    renderSettings(view.settings);
     renderLog();
     renderAbout();
     maybeLoadPresets(view);
@@ -660,6 +667,7 @@
     if (site.connected) {
       setChip(byId("site-status"), "ok", "connected", site.engine ? t("site.connected", { engine: site.engine }) : t("site.connectedNoEngine"));
     } else setChip(byId("site-status"), "warn", "missing", t("site.missing"));
+    byId("site-status").title = site.connected || !site.reason ? "" : String(site.reason);
     if (chatgpt.tabFound && chatgpt.ready !== false) setChip(byId("chatgpt-status"), "ok", "ready", t("chatgpt.ready"));
     else if (chatgpt.tabFound) setChip(byId("chatgpt-status"), "warn", "not-ready", t("chatgpt.notReady"));
     else setChip(byId("chatgpt-status"), "warn", "missing", t("chatgpt.missing"));
@@ -1007,7 +1015,9 @@
     setDisabled("btn-create-batch", ui.creating || level === "error" || f.total === null || !!f.errors.seed);
     setDisabled("btn-test-job", ui.creating || !!f.errors.seed);
     setDisabled("btn-import-test", ui.creating);
-    byId("site-hint").hidden = f.mode === "import" || !!ui.view.site.connected;
+    const { site } = ui.view;
+    byId("site-hint").hidden = f.mode === "import" || !!site.connected;
+    setText(byId("site-hint"), site.reason ? `${t("create.siteHint")} ${site.reason}` : t("create.siteHint"));
     document.querySelectorAll(".chip-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.frames === byId("input-frames").value.trim())));
   }
   function fillSelect(select, options, fallback) {
@@ -1067,9 +1077,24 @@
     byId("field-characters").hidden = mode !== "multi";
     updateForm();
   }
+  function renderPending() {
+    const p = ui.siteProgress;
+    const known = ui.creating && p && p.total > 0;
+    const bar = byId("create-pending").querySelector("progress");
+    if (known) {
+      bar.max = p.total;
+      bar.value = Math.min(p.done, p.total);
+    } else {
+      bar.removeAttribute("value");
+      bar.removeAttribute("max");
+    }
+    setText(byId("create-pending-text"), known ? t("create.progress", { done: p.done, total: p.total }) : t("create.pending"));
+  }
   function setCreating(on2) {
     ui.creating = on2;
+    ui.siteProgress = null;
     byId("create-pending").hidden = !on2;
+    renderPending();
     updateForm();
   }
   function renderSummary(s) {
@@ -1125,6 +1150,7 @@
       reader.readAsText(file, "utf-8");
     });
   }
+  var fileNameOf = (file) => file.name.slice(-200);
   function renderImportInfo() {
     const f = ui.importFile;
     setText(byId("import-file-info"), f ? t("import.selected", { name: f.name, size: fmtBytes(f.size) }) : t("import.none"));
@@ -1147,9 +1173,9 @@
         toast(t("err.fileRead"), "error");
         return;
       }
-      ui.importFile = { name: file.name, size: file.size, text };
+      ui.importFile = { name: fileNameOf(file), size: file.size, text };
       renderImportInfo();
-      await submitBatch("IMPORT_BATCH", { text, fileName: file.name });
+      await submitBatch("IMPORT_BATCH", { text, fileName: fileNameOf(file) });
     } finally {
       input.value = "";
     }
@@ -1436,7 +1462,7 @@
     const c = ui.sctl[f.key];
     return f.type === "checkbox" ? c.checked === Boolean(value) : c.value === String(value ?? "");
   }
-  function syncSettings(settings) {
+  function renderSettings(settings) {
     for (const f of SETTINGS_FIELDS) {
       const prev = ui.settingsBase[f.key];
       ui.settingsBase[f.key] = settings[f.key];
@@ -1470,7 +1496,7 @@
     for (const f of SETTINGS_FIELDS) if (f.key in patch && readControl(f) === patch[f.key]) ui.dirty.delete(f.key);
     ui.view = { ...ui.view, settings: saved };
     ui.sig = "";
-    syncSettings(saved);
+    renderSettings(saved);
     renderFormState(ui.view);
     renderAbout();
     toast(t("settings.saved"), "success");
@@ -1615,7 +1641,7 @@
     };
     on(byId("settings-form"), "input", edited);
     on(byId("settings-form"), "change", edited);
-    on(byId("settings-form"), "focusout", () => syncSettings(ui.view.settings));
+    on(byId("settings-form"), "focusout", () => renderSettings(ui.view.settings));
     on(byId("settings-form"), "submit", (e) => {
       e.preventDefault();
       return saveSettings();

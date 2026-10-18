@@ -13,7 +13,7 @@ import { startStaticSite } from './mock/site-server.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const EXT = join(ROOT, 'dist/chrome-unpacked');
-const SITE_DIST = process.env.SITE_DIST ?? '/tmp/site/dist';
+const SITE_DIST = process.env.SITE_DIST ?? '';
 const DEBUG_PORT = 9333 + Math.floor(Math.random() * 500);
 const E = {};
 
@@ -58,7 +58,7 @@ async function reloadChat() {
 
 before(async () => {
   assert.ok(existsSync(join(EXT, 'manifest.json')), 'сначала выполните npm run build');
-  assert.ok(existsSync(join(SITE_DIST, 'index.html')), `нет собранного сайта: SITE_DIST=${SITE_DIST}`);
+  assert.ok(SITE_DIST && existsSync(join(SITE_DIST, 'index.html')), 'задайте SITE_DIST — каталог dist собранного сайта с установленным мостом (см. .env.example)');
   E.dirs = makeDirs();
   E.certs = await makeCerts();
   E.chat = await startMockChatGpt({ certs: E.certs, defaults: { delayMs: 700 } });

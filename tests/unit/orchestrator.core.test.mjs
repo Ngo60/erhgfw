@@ -194,3 +194,17 @@ test('тестовое задание: отдельная папка Test_…, �
   assert.equal(full.existed, false);
   assert.equal(full.total, 6);
 });
+
+test('один персонаж × 20: 20 файлов подряд, ротация беседы на 12-м кадре, имена 001…020', async () => {
+  const env = await setup({ intervalSec: 2 });
+  const batch = await makeBatch({ characters: 1, frames: 20 });
+  await env.orch.addBatch(batch);
+  await env.orch.start(batch.batch_id, { acknowledged: true });
+  assert.ok(await runUntil(env, batchDone(env, batch.batch_id)));
+  const folder = folderOf(env, batch.batch_id);
+  const files = names(env, `${folder}/Character_001`);
+  assert.deepEqual(files, Array.from({ length: 20 }, (_, i) => `${String(i + 1).padStart(3, '0')}.png`));
+  assert.equal(new Set(env.page.sent.map((s) => s.conv)).size, 2, 'ротация: 12 + 8 кадров');
+  assert.deepEqual([...new Set(env.page.sent.slice(0, 12).map((s) => s.conv))].length, 1);
+  assert.equal(env.store.jobsOf(batch.batch_id).every((j) => j.attempts === 1), true);
+});
