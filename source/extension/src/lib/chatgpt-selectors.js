@@ -2,13 +2,13 @@
 // Источники: наблюдаемая разметка chatgpt.com (data-testid/aria-label), публичные описания DOM; проверяется диагностикой
 // «Проверить интерфейс ChatGPT» и тестами на макете. Соответствие реальному интерфейсу нужно подтверждать вручную.
 
-export const SELECTOR_PROFILE = 'chatgpt-2026-10';
+export const SELECTOR_PROFILE = 'chatgpt-2026-10b';
 
 export const SELECTORS = Object.freeze({
-  composer: ['#prompt-textarea', 'div.ProseMirror[contenteditable="true"]', 'textarea[name="prompt-textarea"]'],
-  send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]'],
-  stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]', 'button[aria-label^="Stop"]'],
-  turn: ['section[data-testid^="conversation-turn-"]', 'article[data-testid^="conversation-turn-"]'],
+  composer: ['#prompt-textarea', 'div.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][data-virtualkeyboard="true"]', 'textarea[name="prompt-textarea"]', 'form [contenteditable="true"][role="textbox"]'],
+  send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label^="Отправить"]'],
+  stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]', 'button[aria-label^="Stop"]', 'button[aria-label^="Остановить"]'],
+  turn: ['section[data-testid^="conversation-turn-"]', 'article[data-testid^="conversation-turn-"]', '[data-testid^="conversation-turn-"]'],
   roleBlock: ['[data-message-author-role]'],
   // Сгенерированное изображение лежит вне [data-message-author-role] и отдаётся с /backend-api/estuary/content.
   image: ['img[src*="/backend-api/estuary/content"]', 'img[alt^="Generated image"]', 'img[src*=".oaiusercontent.com/"]'],

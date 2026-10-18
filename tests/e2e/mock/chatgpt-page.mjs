@@ -33,6 +33,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .icon-btn{background:#f4f4f4;color:#0d0d0d}
 .send-btn,.stop-btn,.btn.round{background:#0d0d0d;color:#fff}
 .send-btn:disabled,.btn.round.off{background:#d7d7d7;cursor:default}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .slot{display:inline-flex}
 #challenge-stage{position:fixed;inset:0;z-index:2147483000;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
 #challenge-stage iframe{width:300px;height:65px;border:1px solid #ddd}
@@ -306,12 +307,18 @@ function clientMain(BOOT) {
     return b;
   }
 
+  function makeVoiceButton() {
+    return S.ui.uiChanged
+      ? h('div', { class: 'btn round off' }, '\u266a')
+      : h('button', { type: 'button', class: 'icon-btn', 'data-testid': 'composer-speech-button', 'aria-label': 'Start voice mode' }, '\u266a');
+  }
+
   function updateControls() {
     if (!els.slot) return;
-    const want = isRunning() ? 'stop' : 'send';
+    const want = isRunning() ? 'stop' : canSend() ? 'send' : 'voice';
     if (slotKind !== want) {
       els.send = want === 'send' ? makeSendButton() : null;
-      els.slot.replaceChildren(want === 'send' ? els.send : makeStopButton());
+      els.slot.replaceChildren(want === 'send' ? els.send : want === 'stop' ? makeStopButton() : makeVoiceButton());
       slotKind = want;
     }
     if (want === 'send') {
@@ -437,10 +444,12 @@ function clientMain(BOOT) {
   function fillTurn(sec, t) {
     if (t.role === 'user') {
       sec.replaceChildren(
+        h('h5', { class: 'sr-only' }, 'You said:'),
         h('div', { 'data-message-author-role': 'user', 'data-message-id': t.msgId }, h('div', { class: 'whitespace-pre-wrap' }, t.text)),
       );
     } else if (t.kind === 'text') {
       sec.replaceChildren(
+        h('h6', { class: 'sr-only' }, 'ChatGPT said:'),
         h('div', { 'data-message-author-role': 'assistant', 'data-message-id': t.msgId }, h('div', { class: 'markdown prose' }, h('p', null, t.text))),
       );
     } else if (t.kind === 'image') {

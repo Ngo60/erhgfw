@@ -1,7 +1,6 @@
 // Чистый анализ снимка страницы ChatGPT (без DOM): блокировки, ход генерации, найденные новые изображения.
 // Используется и content script (во время ожидания), и service worker (проверка перед отправкой), и тестами.
 import { PATTERNS } from './chatgpt-selectors.js';
-import { normText } from './prompt.js';
 
 export function matchAny(text, list) {
   for (const re of list) {
@@ -11,13 +10,19 @@ export function matchAny(text, list) {
   return null;
 }
 
-/** Последний пользовательский ход, текст которого начинается с ключа промпта. */
+const squash = (s) => String(s ?? '').replace(/\s+/g, '');
+
+/**
+ * Последний пользовательский ход, содержащий ключ промпта. Пробелы не учитываются (ChatGPT склеивает абзацы без пробела),
+ * скрытый заголовок вроде «You said:» / «Вы сказали:» перед текстом допустим.
+ */
 export function findUserTurn(snap, key) {
   if (!key) return null;
+  const needle = squash(key);
   const turns = snap.turns ?? [];
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
-    if (t.role === 'user' && normText(t.text).startsWith(key)) return t;
+    if (t.role === 'user' && squash(t.text).includes(needle)) return t;
   }
   return null;
 }
@@ -103,7 +108,7 @@ export function decideWait(snap, ctx, watch, nowMs, opts = {}) {
   if (a.offline) return { result: { status: 'error', code: 'NETWORK', message: 'Браузер сообщает об отсутствии сети.' }, watch: w };
   if (!a.userTurn) {
     w.missingSince ??= nowMs;
-    if (nowMs - w.missingSince >= promptGraceMs) return { result: { status: 'error', code: 'PROMPT_NOT_ACCEPTED', message: 'Отправленный промпт не найден в беседе.' }, watch: w };
+    if (nowMs - w.missingSince >= promptGraceMs) return { result: { status: 'blocked', code: 'SENT_NOT_VISIBLE', message: 'Отправленный промпт не найден в беседе.' }, watch: w };
     return { result: { status: 'pending', sig: 'no-user-turn', phase: 'locating' }, watch: w };
   }
   w.missingSince = null;
