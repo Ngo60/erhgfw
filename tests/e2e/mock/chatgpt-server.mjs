@@ -272,7 +272,7 @@ export async function startMockChatGpt({ port = 0, certs, log = false, defaults:
     pushUser(conv, text);
     const beh = startGeneration(conv, nextBehaviour(), text);
     st.sends.push({ conv_id: conv.id, text, mode: beh.mode, at: Date.now() });
-    return [200, { conv_id: conv.id }];
+    return [200, { conv_id: conv.id, view: viewOf(conv) }];
   }
 
   function handleRetry(body) {
