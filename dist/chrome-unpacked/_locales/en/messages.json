@@ -1,0 +1,5 @@
+{
+  "extName": { "message": "RealPhoto → ChatGPT: batch image generation" },
+  "extDescription": { "message": "Queue prompts from the promts.vibecods.xyz generator and run them in your own open ChatGPT tab; per-character folders, pause and crash recovery. Never bypasses limits or CAPTCHA." },
+  "actionTitle": { "message": "Open the batch generation panel" }
+}

@@ -47,7 +47,7 @@
     --border: #353d49;
     --border-strong: #8793a3;
     --accent: #2563eb;
-    --accent-hover: #3b76f0;
+    --accent-hover: #1f56d6;
     --danger: #dc2626;
     --danger-hover: #b91c1c;
     --focus: #8ab4ff;
@@ -104,15 +104,16 @@ small { font-size: 12px; }
 
 .strip { padding: 10px 12px 8px; border-bottom: 1px solid var(--border); background: var(--bg); }
 .strip-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.strip-row .btn { flex: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .strip-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .tabs {
   position: sticky; top: 0; z-index: 5;
-  display: flex; background: var(--bg); border-bottom: 1px solid var(--border);
+  display: flex; overflow-x: auto; background: var(--bg); border-bottom: 1px solid var(--border);
 }
 .tab {
-  flex: 1 1 auto; min-width: 0; padding: 9px 5px;
+  flex: 1 1 auto; padding: 9px 6px; overflow-wrap: normal; word-break: normal;
   font: inherit; font-weight: 600; line-height: 1.2; text-align: center;
   color: var(--muted); background: transparent; cursor: pointer;
   border: 0; border-bottom: 3px solid transparent;
@@ -120,6 +121,7 @@ small { font-size: 12px; }
 .tab:hover { color: var(--text); background: var(--surface); }
 .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
 .tab:focus-visible { outline-offset: -3px; }
+@media (max-width: 360px) { .tab { padding: 9px 3px; font-size: 12px; } }
 
 .dock {
   position: sticky; bottom: 0; z-index: 6;
@@ -134,7 +136,7 @@ small { font-size: 12px; }
 /* ───────── кнопки ───────── */
 
 .btn {
-  font: inherit; min-height: 32px; padding: 4px 12px; cursor: pointer;
+  font: inherit; min-height: 32px; padding: 4px 12px; cursor: pointer; overflow-wrap: normal; word-break: normal;
   color: var(--text); background: var(--surface-2);
   border: 1px solid var(--border-strong); border-radius: 6px;
 }
@@ -152,7 +154,7 @@ small { font-size: 12px; }
 .btn-danger:disabled { opacity: 0.45; }
 
 .chip-btn {
-  min-width: 36px; min-height: 28px; padding: 0 8px; font: inherit; cursor: pointer;
+  overflow-wrap: normal; min-width: 36px; min-height: 28px; padding: 0 8px; font: inherit; cursor: pointer;
   color: var(--text); background: var(--bg);
   border: 1px solid var(--border-strong); border-radius: 14px;
 }
@@ -350,6 +352,7 @@ progress:indeterminate::-webkit-progress-bar { background: transparent; }
   .diag-item[data-found="false"] .diag-mark { color: var(--danger); }
 }
 .diag-name { font-weight: 600; }
+.diag-state::before { content: "— "; }
 .diag-notes { margin: 4px 0 0; padding-left: 18px; color: var(--muted); }
 
 /* ───────── журнал ───────── */
