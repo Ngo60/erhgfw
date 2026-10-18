@@ -9,6 +9,7 @@ import { generateScenario } from '../engine/generate.ts';
 import { runBatch } from '../engine/batch.ts';
 import { makeSeed } from '../engine/rng.ts';
 import { renderScenario } from '../render/render.ts';
+import { headPoseFor, selfieExtras } from '../render/selfie.ts';
 import { BATCH_SCHEMA, BRIDGE_VERSION } from './protocol.ts';
 import type { CreateBatchPayload } from './protocol.ts';
 
@@ -232,6 +233,8 @@ export async function buildBatch(p: CreateBatchPayload, deps: BuildDeps): Promis
 }
 
 function paramsOf(sc: PhotoScenario): Record<string, string | number | null> {
+  const ex = selfieExtras(sc);
+  const head = headPoseFor(sc, ex);
   return {
     scenario_id: sc.id,
     seed: sc.seed,
@@ -247,5 +250,7 @@ function paramsOf(sc: PhotoScenario): Record<string, string | number | null> {
     emotion: sc.emotion,
     aspect_ratio: sc.ratio.label,
     fingerprint: sc.fingerprint,
+    ...(ex ? { selfie_hand: ex.hand, selfie_grip: ex.grip, selfie_free_hand: ex.freeHand ?? 'none' } : {}),
+    ...(head ? { head_pose: head } : {}),
   };
 }

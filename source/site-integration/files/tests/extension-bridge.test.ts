@@ -106,6 +106,21 @@ describe('buildBatch на реальном движке', () => {
     expect(ids.size).toBe(15);
   });
 
+  it('параметры задания содержат детали селфи и положение головы (для метаданных расширения)', async () => {
+    const b = await buildBatch(payload({ characters: 2, frames_per_character: 12, seed: 'RP-SELFIEPARAMS' }), { origin: ORIGIN, now: FIXED });
+    const jobs = b.characters.flatMap((c) => c.jobs);
+    const selfies = jobs.filter((j) => j.params.selfie_hand !== undefined);
+    expect(selfies.length).toBeGreaterThan(3);
+    for (const j of selfies) {
+      expect(['left', 'right']).toContain(j.params.selfie_hand);
+      expect(typeof j.params.selfie_grip).toBe('string');
+      expect(typeof j.params.head_pose).toBe('string');
+      expect(j.prompt).toContain(j.params.selfie_grip === 'both-hands' ? 'with both hands' : `in her ${String(j.params.selfie_hand)} hand`);
+    }
+    expect(new Set(selfies.map((j) => j.params.selfie_hand)).size).toBe(2);
+    expect(new Set(selfies.map((j) => j.params.head_pose)).size).toBeGreaterThan(2);
+  });
+
   it('идемпотентность: одинаковый запрос → одинаковые id и промпты; другой seed → другой batch_id', async () => {
     const a = await buildBatch(payload(), { origin: ORIGIN, now: FIXED });
     const b = await buildBatch(payload(), { origin: ORIGIN, now: () => new Date('2030-01-01T00:00:00Z') });

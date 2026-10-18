@@ -1,0 +1,56 @@
+{
+  "engine": "1.1.0",
+  "base": "Juncker38/wefeer@29a55fa",
+  "files": [
+    {
+      "path": "src/engine/compose.ts",
+      "before": "2ca27cfc3bf559ae05a9769af689e5457d63d18cc5277a04d23035a26879f3f6",
+      "after": "d0ddd57e4b1561d8ca33ccc74e241227fcae4f41de337848d9176d665f3d2209"
+    },
+    {
+      "path": "src/extension-bridge/bridge.ts",
+      "before": null,
+      "after": "6361abcbbf2465e9ae8fa5913723d83a9522982c9bc93c3d2c9c8d83144d157d"
+    },
+    {
+      "path": "src/extension-bridge/build-batch.ts",
+      "before": null,
+      "after": "2b87fa8a96a56ac0fb9651a20eab9e75d3feb54c0b74cb8ce2e6bedf878e8868"
+    },
+    {
+      "path": "src/extension-bridge/index.ts",
+      "before": null,
+      "after": "638233a9543160b7f70c7c342a7dba7a40a1789252c151c648e5168df8be3b0d"
+    },
+    {
+      "path": "src/extension-bridge/protocol.ts",
+      "before": null,
+      "after": "9f2e60eae4d56a953823c30a66538a3a497796cc82c72ecc4da1ab2d75d5e284"
+    },
+    {
+      "path": "src/render/realism.ts",
+      "before": null,
+      "after": "c412ea14278915d115d290eced6f3106976a1c03d5422f59bfc0e69fa2f57913"
+    },
+    {
+      "path": "src/render/render.ts",
+      "before": "76fa42ad0af9ef4b048bf368b4f78d495b6197e9e26b643cf95f68f4c31b5263",
+      "after": "79326459773a9c3e8b4f2ed286c6067dcf74bfc67bd4e616c4731193e2fc8e1d"
+    },
+    {
+      "path": "src/render/selfie.ts",
+      "before": null,
+      "after": "3eeccb477c1527c57d415127ca470f4eb0896227b9370c155452ee12fb4ce259"
+    },
+    {
+      "path": "tests/extension-bridge.test.ts",
+      "before": null,
+      "after": "5b2bc4321243ad19c73bf6eaf35730094f6a57c936b004f6926eac5eb0f5c5f6"
+    },
+    {
+      "path": "tests/selfie-realism.test.ts",
+      "before": null,
+      "after": "f3fb559b9060f59a506f92356b64063b3fd471e5aecd4163ab9fef19ca5509a1"
+    }
+  ]
+}
