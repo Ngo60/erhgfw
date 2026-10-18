@@ -1,0 +1,1639 @@
+diff --git a/src/engine/compose.ts b/src/engine/compose.ts
+index 6ad9517..fb23c35 100644
+--- a/src/engine/compose.ts
++++ b/src/engine/compose.ts
+@@ -24,7 +24,7 @@ import { accessoryCtx, hasOutfit, outfitReason, needOf, pickAccessories, pickOut
+ import { lightingFor, pickScenery } from './scenery.ts';
+ import { featuresOf, fingerprintOf } from './similarity.ts';
+ 
+-export const ENGINE_VERSION = '1.0.0';
++export const ENGINE_VERSION = '1.1.0';
+ 
+ export interface Keep {
+   sceneId?: string;
+@@ -238,6 +238,9 @@ const ANGLE_W: Record<Angle, number> = {
+   'dynamic-tilt': 0.8,
+   'face-limited': 0.7,
+ };
++/** Настоящие селфи чаще снимают чуть сверху и с наклоном, чем строго анфас: поправка весов ракурса только для селфи. */
++const SELFIE_ANGLE_FACTOR: Partial<Record<Angle, number>> = { front: 0.55, 'eye-level': 0.85, 'slightly-above': 2.4, 'slightly-below': 1.9, 'close-up': 1.2, 'dynamic-tilt': 2.6 };
++const selfieAngleFactor = (capture: Capture, angle: Angle): number => (isSelfie(capture) ? (SELFIE_ANGLE_FACTOR[angle] ?? 1) : 1);
+ const CANDID_ANGLES: readonly Angle[] = ['profile', 'side', 'back-head-turn', 'face-limited', 'dynamic-tilt'];
+ const EMOTION_W: Record<Emotion, number> = {
+   'natural-smile': 4,
+@@ -381,7 +384,7 @@ export function composeFromPlan(plan: Plan, cx: ComposeContext): PhotoScenario |
+   const angle = choose(
+     rng.fork('angle'),
+     opt.angles,
+-    (a) => R.temper(ANGLE_W[a] * (CANDID_ANGLES.includes(a) ? 1 + (sp - 50) / 100 : a === 'front' || a === 'eye-level' ? 1 - (sp - 50) / 200 : 1)),
++    (a) => R.temper(ANGLE_W[a] * selfieAngleFactor(capture, a) * (CANDID_ANGLES.includes(a) ? 1 + (sp - 50) / 100 : a === 'front' || a === 'eye-level' ? 1 - (sp - 50) / 200 : 1)),
+     soft.angle ? (a) => a === soft.angle : undefined,
+     avoid.angle ? (a) => a === avoid.angle : undefined,
+   );
+diff --git a/src/extension-bridge/bridge.ts b/src/extension-bridge/bridge.ts
+new file mode 100644
+index 0000000..947daee
+--- /dev/null
++++ b/src/extension-bridge/bridge.ts
+@@ -0,0 +1,123 @@
++// Мост страницы: принимает запросы расширения (через content script) и отвечает данными движка.
++// Принимаются только сообщения этого же окна и этого же origin; формат строго проверяется.
++import { BUILTIN_PRESETS, cleanName, MAX_USER_PRESETS } from '../core/presets.ts';
++import type { Preset } from '../core/presets.ts';
++import { normalizeSettings } from '../core/settings.ts';
++import type { Settings } from '../core/settings.ts';
++import type { Character } from '../core/types.ts';
++import { LENGTHS, PROFILES } from '../core/vocab.ts';
++import { ENGINE_VERSION } from '../engine/compose.ts';
++import { normalizeCharacter } from '../storage/config.ts';
++import { browserStore, loadJSON } from '../storage/local.ts';
++import { buildBatch, BridgeFailure } from './build-batch.ts';
++import { BRIDGE_VERSION, CHANNEL_SITE, LIMITS, parseCreateBatch, parseRequest, STRATEGIES } from './protocol.ts';
++import type { BridgeError, BridgeRequest, BridgeResponse } from './protocol.ts';
++
++export interface BridgeWindow {
++  location: { origin: string };
++  addEventListener(type: 'message', fn: (ev: MessageEvent) => void): void;
++  removeEventListener(type: 'message', fn: (ev: MessageEvent) => void): void;
++  postMessage(message: unknown, targetOrigin: string): void;
++}
++
++function readSiteSettings(): Settings {
++  return normalizeSettings(loadJSON<unknown>(browserStore(), 'settings', null)).settings;
++}
++
++function readUserPresets(): Preset[] {
++  const raw = loadJSON<unknown>(browserStore(), 'presets', []);
++  if (!Array.isArray(raw)) return [];
++  const out: Preset[] = [];
++  for (const p of raw.slice(0, MAX_USER_PRESETS)) {
++    if (typeof p !== 'object' || p === null) continue;
++    const r = p as Record<string, unknown>;
++    if (typeof r.id !== 'string' || typeof r.name !== 'string') continue;
++    out.push({ id: r.id, name: cleanName(r.name) || 'Без названия', settings: normalizeSettings(r.settings).settings });
++  }
++  return out;
++}
++
++function readSiteCharacter(): Character | null {
++  return normalizeCharacter(loadJSON<unknown>(browserStore(), 'character', null));
++}
++
++export function installExtensionBridge(win: BridgeWindow = window as unknown as BridgeWindow): () => void {
++  const origin = win.location.origin;
++  const running = new Map<string, AbortController>();
++
++  const reply = (req: { id: string }, type: string, ok: boolean, payload?: unknown, error?: BridgeError): void => {
++    const msg: BridgeResponse = { source: CHANNEL_SITE, version: BRIDGE_VERSION, id: req.id, type, ok, ...(payload !== undefined ? { payload } : {}), ...(error ? { error } : {}) };
++    win.postMessage(msg, origin);
++  };
++
++  const handle = async (req: BridgeRequest): Promise<void> => {
++    switch (req.type) {
++      case 'hello': {
++        const hasCharacter = readSiteCharacter() !== null;
++        reply(req, 'hello:result', true, {
++          app: 'RealPhoto Prompt Studio',
++          engine: ENGINE_VERSION,
++          bridge_version: BRIDGE_VERSION,
++          limits: LIMITS,
++          strategies: STRATEGIES,
++          profiles: PROFILES,
++          lengths: LENGTHS,
++          site_character: hasCharacter,
++        });
++        return;
++      }
++      case 'list-presets': {
++        const all = [...BUILTIN_PRESETS.map((p) => ({ ...p, builtin: true })), ...readUserPresets().map((p) => ({ ...p, builtin: false }))];
++        reply(req, 'list-presets:result', true, { presets: all.map((p) => ({ id: p.id, name: p.name, description: p.description ?? '', builtin: p.builtin })) });
++        return;
++      }
++      case 'cancel': {
++        const target = typeof req.payload === 'object' && req.payload !== null ? (req.payload as { target?: unknown }).target : null;
++        const ctl = typeof target === 'string' ? running.get(target) : undefined;
++        ctl?.abort();
++        reply(req, 'cancel:result', true, { cancelled: Boolean(ctl) });
++        return;
++      }
++      case 'create-batch': {
++        const parsed = parseCreateBatch(req.payload);
++        if (!parsed.ok) return reply(req, 'create-batch:result', false, undefined, parsed.error);
++        if (running.size > 0) return reply(req, 'create-batch:result', false, undefined, { code: 'BUSY', message: 'Сайт уже создаёт другую партию.' });
++        const ctl = new AbortController();
++        running.set(req.id, ctl);
++        try {
++          const batch = await buildBatch(parsed.value, {
++            origin,
++            siteSettings: readSiteSettings,
++            userPresets: readUserPresets,
++            siteCharacter: readSiteCharacter,
++            signal: ctl.signal,
++            pause: () => new Promise((r) => setTimeout(r, 0)),
++            onProgress: (done, total) => reply(req, 'create-batch:progress', true, { done, total }),
++          });
++          reply(req, 'create-batch:result', true, { batch });
++        } catch (e) {
++          if (e instanceof BridgeFailure) reply(req, 'create-batch:result', false, undefined, { code: e.code, message: e.message });
++          else reply(req, 'create-batch:result', false, undefined, { code: 'INTERNAL', message: 'Внутренняя ошибка движка при создании партии.' });
++        } finally {
++          running.delete(req.id);
++        }
++        return;
++      }
++    }
++  };
++
++  const onMessage = (ev: MessageEvent): void => {
++    if (ev.source !== (win as unknown) || ev.origin !== origin) return;
++    const parsed = parseRequest(ev.data);
++    if (!parsed.ok) {
++      const id = typeof ev.data === 'object' && ev.data !== null && typeof (ev.data as { id?: unknown }).id === 'string' ? (ev.data as { id: string }).id : null;
++      const source = typeof ev.data === 'object' && ev.data !== null ? (ev.data as { source?: unknown }).source : null;
++      if (id !== null && source === 'rps-extension' && /^[A-Za-z0-9._:-]{1,64}$/.test(id)) reply({ id }, 'error', false, undefined, parsed.error);
++      return;
++    }
++    void handle(parsed.value);
++  };
++
++  win.addEventListener('message', onMessage);
++  return () => win.removeEventListener('message', onMessage);
++}
+diff --git a/src/extension-bridge/build-batch.ts b/src/extension-bridge/build-batch.ts
+new file mode 100644
+index 0000000..46c08fc
+--- /dev/null
++++ b/src/extension-bridge/build-batch.ts
+@@ -0,0 +1,256 @@
++// Построение партии заданий (batch → characters → jobs) только вызовами существующего движка и рендерера.
++import { BUILTIN_PRESETS, cleanName } from '../core/presets.ts';
++import type { Preset } from '../core/presets.ts';
++import { cloneSettings, normalizeSettings } from '../core/settings.ts';
++import type { Settings } from '../core/settings.ts';
++import type { Character, PhotoScenario, Subject } from '../core/types.ts';
++import { ENGINE_VERSION } from '../engine/compose.ts';
++import { generateScenario } from '../engine/generate.ts';
++import { runBatch } from '../engine/batch.ts';
++import { makeSeed } from '../engine/rng.ts';
++import { renderScenario } from '../render/render.ts';
++import { headPoseFor, selfieExtras } from '../render/selfie.ts';
++import { BATCH_SCHEMA, BRIDGE_VERSION } from './protocol.ts';
++import type { CreateBatchPayload } from './protocol.ts';
++
++export class BridgeFailure extends Error {
++  readonly code: string;
++  constructor(code: string, message: string) {
++    super(message);
++    this.code = code;
++  }
++}
++
++/** Неизменяемое «ядро» внешности: должно совпадать во всех кадрах одного персонажа. */
++export const CORE_FIELDS = ['age', 'hairColor', 'hairLength', 'hairType', 'eyeColor', 'skinTone', 'build', 'height', 'freckles', 'features'] as const;
++
++export interface IdentityCore {
++  age: number;
++  hairColor: string;
++  hairLength: string;
++  hairType: string;
++  eyeColor: string;
++  skinTone: string;
++  build: string;
++  height: string;
++  freckles: string;
++  features: string[];
++}
++
++export interface BatchJob {
++  image_job_id: string;
++  index: number;
++  prompt: string;
++  negative: string | null;
++  styling: { hairStyle: string; makeup: string; glasses: string };
++  params: Record<string, string | number | null>;
++  reference: null;
++}
++
++export interface BatchCharacter {
++  character_id: string;
++  index: number;
++  name: string;
++  seed: string;
++  identity: { core: IdentityCore; fingerprint: string; fingerprint_alg: 'sha256-canonical-json' };
++  notes: string[];
++  jobs: BatchJob[];
++}
++
++export interface Batch {
++  schema: typeof BATCH_SCHEMA;
++  batch_id: string;
++  created_at: string;
++  source: { app: 'RealPhoto Prompt Studio'; engine: string; bridge: number; origin: string; kind: 'bridge' };
++  spec: CreateBatchPayload & { seed: string };
++  characters: BatchCharacter[];
++}
++
++export interface BuildDeps {
++  origin: string;
++  now?: () => Date;
++  siteSettings?: () => Settings;
++  userPresets?: () => Preset[];
++  siteCharacter?: () => Character | null;
++  newSeed?: () => string;
++  sha256?: (text: string) => Promise<string>;
++  onProgress?: (done: number, total: number) => void;
++  signal?: AbortSignal;
++  pause?: () => Promise<void>;
++}
++
++const pad3 = (n: number): string => String(n).padStart(3, '0');
++
++export function canonicalJson(value: unknown): string {
++  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
++  if (value !== null && typeof value === 'object') {
++    const o = value as Record<string, unknown>;
++    return `{${Object.keys(o)
++      .sort()
++      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
++      .join(',')}}`;
++  }
++  return JSON.stringify(value);
++}
++
++export async function defaultSha256(text: string): Promise<string> {
++  const buf = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
++  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
++}
++
++export function coreOf(s: Subject): IdentityCore {
++  return {
++    age: s.age,
++    hairColor: s.hairColor,
++    hairLength: s.hairLength,
++    hairType: s.hairType,
++    eyeColor: s.eyeColor,
++    skinTone: s.skinTone,
++    build: s.build,
++    height: s.height,
++    freckles: s.freckles,
++    features: [...s.features].sort(),
++  };
++}
++
++/** Сколько полей ядра заметно различаются (возраст — при разнице ≥ 3 лет). */
++export function coreDistance(a: IdentityCore, b: IdentityCore): number {
++  let d = 0;
++  for (const k of CORE_FIELDS) {
++    if (k === 'age') d += Math.abs(a.age - b.age) >= 3 ? 1 : 0;
++    else if (k === 'features') d += a.features.join('|') !== b.features.join('|') ? 1 : 0;
++    else d += a[k] !== b[k] ? 1 : 0;
++  }
++  return d;
++}
++
++const MIN_CORE_DISTANCE = 4;
++const PASSPORT_ATTEMPTS = 16;
++
++function resolveBase(p: CreateBatchPayload, deps: BuildDeps): Settings {
++  if (p.preset_id !== null) {
++    const all = [...BUILTIN_PRESETS, ...(deps.userPresets?.() ?? [])];
++    const found = all.find((x) => x.id === p.preset_id);
++    if (!found) throw new BridgeFailure('PRESET_NOT_FOUND', `Пресет «${cleanName(p.preset_id)}» не найден на сайте.`);
++    return cloneSettings(found.settings);
++  }
++  return cloneSettings(deps.siteSettings ? deps.siteSettings() : normalizeSettings(null).settings);
++}
++
++export async function buildBatch(p: CreateBatchPayload, deps: BuildDeps): Promise<Batch> {
++  const sha = deps.sha256 ?? defaultSha256;
++  const pause = deps.pause ?? (() => Promise.resolve());
++  const seed = p.seed ?? (deps.newSeed ?? makeSeed)();
++  const base = resolveBase(p, deps);
++  base.profile = p.profile;
++  base.length = p.length;
++  base.includeNegative = p.include_negative;
++  base.locks = [];
++
++  const frameSettings = normalizeSettings({ ...base, mode: p.strategy === 'series' ? 'series' : 'character' }).settings;
++  const passportSettings = normalizeSettings({ ...base, mode: 'new' }).settings;
++  const characters = p.mode === 'single' ? 1 : p.characters;
++  const total = characters * p.frames_per_character;
++
++  const specForId = { engine: ENGINE_VERSION, bridge: BRIDGE_VERSION, p: { ...p, seed }, settings: frameSettings };
++  const batchId = `RPS-${(await sha(canonicalJson(specForId))).slice(0, 10)}`;
++
++  const out: BatchCharacter[] = [];
++  const cores: IdentityCore[] = [];
++  let done = 0;
++  const siteCharacter = p.use_site_character ? (deps.siteCharacter?.() ?? null) : null;
++  if (p.use_site_character && !siteCharacter) throw new BridgeFailure('NO_SITE_CHARACTER', 'На сайте нет сохранённого персонажа.');
++
++  for (let c = 1; c <= characters; c++) {
++    if (deps.signal?.aborted) throw new BridgeFailure('CANCELLED', 'Создание партии отменено.');
++    const characterId = `${batchId}-C${pad3(c)}`;
++    const cseed = `${seed}~c${pad3(c)}`;
++    const notes: string[] = [];
++    let subject: Subject | null = null;
++
++    if (c === 1 && siteCharacter) {
++      subject = siteCharacter.subject;
++    } else {
++      let best: { subject: Subject; dist: number } | null = null;
++      for (let attempt = 0; attempt < PASSPORT_ATTEMPTS; attempt++) {
++        const g = generateScenario({ settings: passportSettings, seed: `${cseed}~passport~${attempt}`, index: 0 });
++        if (!g.ok) continue;
++        const core = coreOf(g.result.scenario.subject);
++        const dist = cores.length ? Math.min(...cores.map((x) => coreDistance(core, x))) : MIN_CORE_DISTANCE;
++        if (!best || dist > best.dist) best = { subject: g.result.scenario.subject, dist };
++        if (dist >= MIN_CORE_DISTANCE) break;
++      }
++      if (!best) throw new BridgeFailure('PASSPORT_FAILED', `Не удалось создать паспорт внешности для персонажа ${c}.`);
++      subject = best.subject;
++      if (best.dist < MIN_CORE_DISTANCE) notes.push(`Внешность похожа на другого персонажа партии (различий в ядре: ${best.dist}).`);
++    }
++
++    const core = coreOf(subject);
++    cores.push(core);
++    const character: Character = { id: characterId, name: `Персонаж ${c}`, subject, createdAt: 0 };
++    const res = await runBatch({ settings: frameSettings, count: p.frames_per_character, baseSeed: cseed, character, history: [], pause });
++    if (res.failures > 0 || res.scenarios.length !== p.frames_per_character) {
++      throw new BridgeFailure('GENERATION_FAILED', `Движок не смог создать все кадры персонажа ${c} (ошибок: ${res.failures}). Ослабьте ограничения пресета.`);
++    }
++    const coreKey = canonicalJson(core);
++    const jobs: BatchJob[] = [];
++    for (const [i, sc] of res.scenarios.entries()) {
++      if (canonicalJson(coreOf(sc.subject)) !== coreKey) throw new BridgeFailure('IDENTITY_DRIFT', `Ядро внешности персонажа ${c} изменилось в кадре ${i + 1}.`);
++      const r = renderScenario(sc, { profile: p.profile, length: p.length, includeNegative: p.include_negative });
++      if (r.problems.length) throw new BridgeFailure('UNSAFE_PROMPT', `Промпт кадра ${i + 1} не прошёл проверку безопасности сайта: ${r.problems[0]}`);
++      jobs.push({
++        image_job_id: `${characterId}-F${pad3(i + 1)}`,
++        index: i + 1,
++        prompt: r.main,
++        negative: p.include_negative ? r.negative : null,
++        styling: { hairStyle: sc.subject.hairStyle, makeup: sc.subject.makeup, glasses: sc.subject.glasses },
++        params: paramsOf(sc),
++        reference: null,
++      });
++      done += 1;
++      deps.onProgress?.(done, total);
++    }
++    out.push({
++      character_id: characterId,
++      index: c,
++      name: character.name,
++      seed: cseed,
++      identity: { core, fingerprint: await sha(coreKey), fingerprint_alg: 'sha256-canonical-json' },
++      notes,
++      jobs,
++    });
++    await pause();
++  }
++
++  return {
++    schema: BATCH_SCHEMA,
++    batch_id: batchId,
++    created_at: (deps.now ?? (() => new Date()))().toISOString(),
++    source: { app: 'RealPhoto Prompt Studio', engine: ENGINE_VERSION, bridge: BRIDGE_VERSION, origin: deps.origin, kind: 'bridge' },
++    spec: { ...p, seed },
++    characters: out,
++  };
++}
++
++function paramsOf(sc: PhotoScenario): Record<string, string | number | null> {
++  const ex = selfieExtras(sc);
++  const head = headPoseFor(sc, ex);
++  return {
++    scenario_id: sc.id,
++    seed: sc.seed,
++    mode: sc.mode,
++    scene_id: sc.sceneId,
++    category: sc.category,
++    season: sc.season,
++    weather: sc.weather,
++    time: sc.time,
++    capture: sc.capture,
++    framing: sc.framing,
++    angle: sc.angle,
++    emotion: sc.emotion,
++    aspect_ratio: sc.ratio.label,
++    fingerprint: sc.fingerprint,
++    ...(ex ? { selfie_hand: ex.hand, selfie_grip: ex.grip, selfie_free_hand: ex.freeHand ?? 'none' } : {}),
++    ...(head ? { head_pose: head } : {}),
++  };
++}
+diff --git a/src/extension-bridge/index.ts b/src/extension-bridge/index.ts
+new file mode 100644
+index 0000000..cb82c9e
+--- /dev/null
++++ b/src/extension-bridge/index.ts
+@@ -0,0 +1,3 @@
++export { installExtensionBridge } from './bridge.ts';
++export { buildBatch, BridgeFailure } from './build-batch.ts';
++export * from './protocol.ts';
+diff --git a/src/extension-bridge/protocol.ts b/src/extension-bridge/protocol.ts
+new file mode 100644
+index 0000000..5e6be76
+--- /dev/null
++++ b/src/extension-bridge/protocol.ts
+@@ -0,0 +1,112 @@
++// Версионированный протокол обмена «страница сайта ↔ расширение Chrome» (канал window.postMessage).
++// Сайт остаётся единственным источником логики генерации; расширение только исполняет очередь.
++import { LENGTHS, PROFILES } from '../core/vocab.ts';
++import type { Length, Profile } from '../core/vocab.ts';
++
++export const BRIDGE_VERSION = 1;
++export const CHANNEL_EXT = 'rps-extension';
++export const CHANNEL_SITE = 'rps-site';
++export const BATCH_SCHEMA = 'rps-batch/1';
++
++export const LIMITS = { maxCharacters: 50, maxFrames: 100, maxTotalJobs: 1500 } as const;
++
++export const STRATEGIES = ['character', 'series'] as const;
++export type Strategy = (typeof STRATEGIES)[number];
++
++export const REQUEST_TYPES = ['hello', 'list-presets', 'create-batch', 'cancel'] as const;
++export type RequestType = (typeof REQUEST_TYPES)[number];
++
++export interface BridgeError {
++  code: string;
++  message: string;
++}
++
++export interface BridgeRequest {
++  source: typeof CHANNEL_EXT;
++  version: number;
++  id: string;
++  type: RequestType;
++  payload?: unknown;
++}
++
++export interface BridgeResponse {
++  source: typeof CHANNEL_SITE;
++  version: number;
++  id: string;
++  type: string;
++  ok: boolean;
++  payload?: unknown;
++  error?: BridgeError;
++}
++
++export interface CreateBatchPayload {
++  mode: 'single' | 'multi';
++  characters: number;
++  frames_per_character: number;
++  strategy: Strategy;
++  /** null — текущие настройки на странице сайта. */
++  preset_id: string | null;
++  /** null — сайт выберет случайный seed. */
++  seed: string | null;
++  profile: Profile;
++  length: Length;
++  include_negative: boolean;
++  /** Использовать персонажа, сохранённого на сайте, как первого персонажа партии. */
++  use_site_character: boolean;
++}
++
++export type Parsed<T> = { ok: true; value: T } | { ok: false; error: BridgeError };
++
++const ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
++const SEED_RE = /^[A-Za-z0-9._~:-]{1,64}$/;
++
++const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
++const fail = (code: string, message: string): { ok: false; error: BridgeError } => ({ ok: false, error: { code, message } });
++
++export function parseRequest(data: unknown): Parsed<BridgeRequest> {
++  if (!isObj(data)) return fail('BAD_REQUEST', 'Сообщение должно быть объектом.');
++  if (data.source !== CHANNEL_EXT) return fail('BAD_SOURCE', 'Неизвестный источник сообщения.');
++  if (data.version !== BRIDGE_VERSION) return fail('VERSION_MISMATCH', `Поддерживается только версия протокола ${BRIDGE_VERSION}.`);
++  if (typeof data.id !== 'string' || !ID_RE.test(data.id)) return fail('BAD_ID', 'Некорректный идентификатор запроса.');
++  if (typeof data.type !== 'string' || !(REQUEST_TYPES as readonly string[]).includes(data.type)) return fail('BAD_TYPE', 'Неизвестный тип запроса.');
++  return { ok: true, value: { source: CHANNEL_EXT, version: BRIDGE_VERSION, id: data.id, type: data.type as RequestType, payload: data.payload } };
++}
++
++function intIn(v: unknown, min: number, max: number): number | null {
++  return typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : null;
++}
++
++export function parseCreateBatch(payload: unknown): Parsed<CreateBatchPayload> {
++  if (!isObj(payload)) return fail('BAD_PAYLOAD', 'Нужен объект параметров партии.');
++  const mode = payload.mode;
++  if (mode !== 'single' && mode !== 'multi') return fail('BAD_PAYLOAD', 'mode: «single» или «multi».');
++  const characters = mode === 'single' ? 1 : intIn(payload.characters, 1, LIMITS.maxCharacters);
++  if (characters === null) return fail('BAD_PAYLOAD', `characters: целое от 1 до ${LIMITS.maxCharacters}.`);
++  const frames = intIn(payload.frames_per_character, 1, LIMITS.maxFrames);
++  if (frames === null) return fail('BAD_PAYLOAD', `frames_per_character: целое от 1 до ${LIMITS.maxFrames}.`);
++  if (characters * frames > LIMITS.maxTotalJobs) return fail('TOO_LARGE', `Партия больше лимита ${LIMITS.maxTotalJobs} изображений.`);
++  const strategy = payload.strategy;
++  if (typeof strategy !== 'string' || !(STRATEGIES as readonly string[]).includes(strategy)) return fail('BAD_PAYLOAD', 'strategy: «character» или «series».');
++  const preset = payload.preset_id;
++  if (preset !== null && (typeof preset !== 'string' || !ID_RE.test(preset))) return fail('BAD_PAYLOAD', 'preset_id: строка или null.');
++  const seed = payload.seed;
++  if (seed !== null && (typeof seed !== 'string' || !SEED_RE.test(seed))) return fail('BAD_PAYLOAD', 'seed: 1–64 символа [A-Za-z0-9._~:-] или null.');
++  if (typeof payload.profile !== 'string' || !(PROFILES as readonly string[]).includes(payload.profile)) return fail('BAD_PAYLOAD', 'profile: неизвестный профиль.');
++  if (typeof payload.length !== 'string' || !(LENGTHS as readonly string[]).includes(payload.length)) return fail('BAD_PAYLOAD', 'length: неизвестная длина.');
++  if (typeof payload.include_negative !== 'boolean' || typeof payload.use_site_character !== 'boolean') return fail('BAD_PAYLOAD', 'include_negative и use_site_character должны быть boolean.');
++  return {
++    ok: true,
++    value: {
++      mode,
++      characters,
++      frames_per_character: frames,
++      strategy: strategy as Strategy,
++      preset_id: preset as string | null,
++      seed: seed as string | null,
++      profile: payload.profile as Profile,
++      length: payload.length as Length,
++      include_negative: payload.include_negative,
++      use_site_character: payload.use_site_character,
++    },
++  };
++}
+diff --git a/src/main.tsx b/src/main.tsx
+index f4e3468..a5f06d3 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -2,6 +2,10 @@ import { StrictMode } from 'react';
+ import { createRoot } from 'react-dom/client';
+ import { App } from './ui/App.tsx';
+ import './ui/styles.css';
++import { installExtensionBridge } from './extension-bridge/index.ts';
++
++// Мост для расширения Chrome «пакетная генерация»: пассивен, отвечает только на запросы расширения.
++installExtensionBridge();
+ 
+ const root = document.getElementById('root');
+ if (!root) throw new Error('Не найден контейнер #root');
+diff --git a/src/render/realism.ts b/src/render/realism.ts
+new file mode 100644
+index 0000000..883f4ad
+--- /dev/null
++++ b/src/render/realism.ts
+@@ -0,0 +1,74 @@
++// Реалистичность фона и «характер камеры». Чистые функции: зависят только от сценария и переданного потока случайных чисел.
++// Цель — убрать признаки, по которым ИИ-кадр узнаётся: постановочный, «открыточный» и везде одинаково резкий фон,
++// симметрия, идеальное равномерное освещение, безликая «идеальная» толпа и однотипные кадры-селфи.
++import type { PhotoScenario } from '../core/types.ts';
++import type { Rng } from '../engine/rng.ts';
++import { isArmSelfie, isMirrorSelfie } from './selfie.ts';
++
++interface Line {
++  text: string;
++  w: number;
++  when?: (s: PhotoScenario) => boolean;
++}
++
++const dark = (s: PhotoScenario): boolean => s.time === 'dusk' || s.time === 'evening' || s.time === 'night';
++const skyOk = (s: PhotoScenario): boolean => s.weather !== null && ['clear', 'partly-cloudy', 'overcast', 'windy', 'heat'].includes(s.weather);
++
++export const TIDY_LINE = 'Nothing in the scene has been tidied or arranged for the photo; it looks like an ordinary, slightly messy real place.';
++
++const BACKGROUND_LINES: readonly Line[] = [
++  { text: TIDY_LINE, w: 3 },
++  { text: 'Objects near the edges of the frame are partly cut off, and nothing in the background is symmetrical or perfectly aligned.', w: 2.5 },
++  {
++    text: 'This is not a scenic postcard view: the place looks ordinary and unremarkable, with the occasional unrelated object, wire, sign or parked vehicle near the edges.',
++    w: 2.6,
++    when: (s) => s.env !== 'indoor' && (s.category === 'city' || s.category === 'everyday' || s.category === 'food' || s.category === 'travel'),
++  },
++  {
++    text: 'The landscape is not composed like a postcard: the horizon is not perfectly framed and there is no dramatic light, only what the moment happened to give.',
++    w: 2.6,
++    when: (s) => s.env !== 'indoor' && (s.category === 'nature' || s.category === 'water-sport' || s.category === 'travel'),
++  },
++  { text: 'The sky is plain and a little overexposed rather than dramatic.', w: 1.8, when: (s) => s.env === 'outdoor' && s.weatherMode === 'visible' && s.view !== 'window' && !dark(s) && skyOk(s) },
++  { text: 'The light is uneven, with some corners darker and some surfaces slightly blown out, not evenly lit like a studio or a render.', w: 2.5, when: (s) => s.env === 'indoor' && !dark(s) },
++  { text: 'The room shows ordinary signs of use: a few unrelated things lying around that nobody posed.', w: 2, when: (s) => s.env === 'indoor' && s.category === 'home' },
++  { text: 'Surfaces in the background show everyday wear: scuffs, uneven paint, dust and faded edges.', w: 1.6, when: (s) => s.env !== 'outdoor' },
++  { text: 'Signs and screens in the background are out of focus, turned away or too small to read.', w: 1.8, when: (s) => s.category === 'city' || s.category === 'food' || s.category === 'everyday' },
++  { text: 'Light sources in the background differ in color temperature; some bright lamps are slightly blown out while the shadows stay noisy.', w: 3, when: dark },
++];
++
++/** До count разных предложений об «обычности» фона без повторов; подбор учитывает сцену, время суток и людей в кадре. */
++export function backgroundRealism(s: PhotoScenario, r: Rng, count: number, skip: readonly string[] = []): string[] {
++  const pool = BACKGROUND_LINES.filter((l) => !skip.includes(l.text) && (!l.when || l.when(s)));
++  const out: string[] = [];
++  for (let i = 0; i < count; i++) {
++    const pick = r.weighted(pool, (l) => (out.includes(l.text) ? 0 : l.w));
++    if (!pick) break;
++    out.push(pick.text);
++  }
++  return out;
++}
++
++/** Особенности картинки именно от фронтальной камеры или зеркала (для остальных способов съёмки — null). */
++export function cameraCharacter(s: PhotoScenario): string | null {
++  if (isArmSelfie(s.capture) && s.look.style === 'smartphone') {
++    return 'Front-camera look: slightly wide-angle perspective, so her face and the arm nearest the lens look a little larger than the rest of her, with mild stretching toward the edges of the frame.';
++  }
++  if (isMirrorSelfie(s.capture)) {
++    return 'The reflective surface is not perfectly clean: faint smudges, slight distortion near its edges, and a bit of its frame or edge may show.';
++  }
++  return null;
++}
++
++/** Дополнительные пункты negative: признаки «постановочного» ИИ-фона. */
++export const NEGATIVE_BACKGROUND: readonly string[] = [
++  'staged or overly curated background',
++  'postcard-perfect scenery',
++  'stock photo look',
++  'cinematic color grading',
++  'perfectly symmetrical composition',
++  'uniformly razor-sharp background',
++  'repeated or duplicated background objects',
++  'garbled signs or text in the background',
++  'identical faceless crowd',
++];
+diff --git a/src/render/render.ts b/src/render/render.ts
+index 670e495..6a98c6a 100644
+--- a/src/render/render.ts
++++ b/src/render/render.ts
+@@ -33,6 +33,8 @@ import { FEATURE_BY_ID } from '../data/appearance.ts';
+ import { createRng } from '../engine/rng.ts';
+ import type { Rng } from '../engine/rng.ts';
+ import { ENGINE_VERSION } from '../engine/compose.ts';
++import { backgroundRealism, cameraCharacter, NEGATIVE_BACKGROUND, TIDY_LINE } from './realism.ts';
++import { HEAD_EN, RU_FREE_HAND, RU_GRIP, RU_HAND, RU_HEAD, headPoseFor, isArmSelfie, selfieCaptureSentence, selfieExtras, selfieGazePhrase } from './selfie.ts';
+ import { EN_BUILD, EN_EYE, EN_FRECKLES, EN_HAIR_COLOR, EN_HAIR_LENGTH, EN_HAIR_STYLE, EN_HAIR_TYPE, EN_HEIGHT, EN_MAKEUP, EN_SKIN } from './phrases.ts';
+ 
+ export interface RenderOptions {
+@@ -154,7 +156,7 @@ function expressionPhrase(s: PhotoScenario, r: Rng): string {
+         : reflect
+           ? 'looking at her reflection'
+           : s.capture === 'selfie-arm' || s.capture === 'front-camera'
+-            ? 'looking into the front camera'
++            ? (selfieGazePhrase(s, selfieExtras(s)) ?? 'looking into the front camera')
+             : s.angle === 'back-head-turn'
+               ? 'glancing back toward the camera'
+               : r.pick(['looking straight into the lens', 'looking toward the camera']),
+@@ -165,10 +167,14 @@ function expressionPhrase(s: PhotoScenario, r: Rng): string {
+   };
+   const gaze = gazes[s.gaze];
+   if (s.faceVisibility === 'partial') return `What is visible of her face shows ${em}, ${gaze}.`;
++  const head = headPoseFor(s);
++  if (head) return r.pick([`She has ${em}, ${gaze}, ${HEAD_EN[head]}.`, `${cap(HEAD_EN[head])}, she has ${em}, ${gaze}.`]);
+   return r.pick([`She has ${em}, ${gaze}.`, `${cap(gaze)}, she has ${em}.`]);
+ }
+ 
+ function captureSentence(s: PhotoScenario, r: Rng): string {
++  const ex = selfieExtras(s);
++  if (ex) return selfieCaptureSentence(s, ex, r);
+   const hand = s.hand;
+   const map: Record<Capture, string[]> = {
+     'selfie-arm': [
+@@ -264,7 +270,7 @@ function formatSentence(s: PhotoScenario): string {
+   const { label, orientation } = s.ratio;
+   const word = orientation === 'vertical' ? 'vertical (portrait-orientation)' : orientation === 'horizontal' ? 'horizontal (landscape-orientation)' : 'square';
+   const whole = s.framing === 'full-body' || s.framing === 'in-motion' || s.framing === 'seated';
+-  const target = whole ? 'her whole figure, including head, hands and feet,' : 'her head and hands';
++  const target = whole ? 'her whole figure, including head, hands and feet,' : isArmSelfie(s.capture) ? (selfieExtras(s)?.freeHand ? 'her head and free hand' : 'her head') : 'her head and hands';
+   const wide = s.ratio.w / s.ratio.h >= 1.9 ? ' with enough surrounding space to read the setting' : '';
+   return `Composed for a ${word} ${label} frame${wide}; keep ${target} fully inside the frame with comfortable margins.`;
+ }
+@@ -273,19 +279,34 @@ const REALISM = [
+   'Natural skin texture with visible pores and fine hairs, no beauty retouching, ordinary believable surroundings.',
+   'Unretouched, true-to-life skin and fabrics, believable proportions and consistent shadows.',
+   'Real-world imperfections stay in: uneven skin tone, creases in the clothes, objects that were not arranged for the camera.',
++  'Skin shows natural variation, with slight redness and tiny blemishes, and the clothes have real creases and wear.',
++  'Unposed and unstyled: nobody arranged the light, the pose or the background for this picture.',
++];
++
++const REALISM_PHONE = [
++  'It reads as an unedited phone snapshot, not a styled photoshoot: ordinary light, ordinary framing, no studio polish.',
++  'Casual phone-snapshot framing: not perfectly composed, the subject slightly off-center, with no deliberate styling.',
+ ];
+ 
+ function sharpnessSentence(s: PhotoScenario): string {
+   const dark = s.time === 'dusk' || s.time === 'evening' || s.time === 'night';
++  const phone = s.look.style === 'smartphone';
+   if (s.look.sharpness === 'sharp') {
+-    return dark ? 'Even in the low light the background stays readable, with only mild noise in the shadows and no artificial blur.' : 'The background stays clear and readable, without artificial blur.';
++    if (dark) {
++      return phone
++        ? 'Phone-camera low-light rendering: visible noise in the shadows and softer distant detail, with no artificial blur.'
++        : 'Even in the low light the background stays readable, with only mild noise in the shadows and no artificial blur.';
++    }
++    return phone
++      ? 'Phone-camera depth of field: the whole scene is in focus, but distant details are slightly soft and simplified, with no portrait-mode blur.'
++      : 'The background stays clear and readable, without artificial blur.';
+   }
+   if (s.look.sharpness === 'moderate') return 'Moderate, natural depth of field: the background is slightly softer but still readable.';
+   return 'Shallow depth of field with a softly blurred background.';
+ }
+ 
+ const COLOR_SENTENCE = {
+-  natural: 'Natural colors with no filters.',
++  natural: 'True-to-life colors with no filter, grading or HDR boost.',
+   bw: 'Black-and-white image with a natural tonal range.',
+   muted: 'Muted, slightly desaturated natural colors.',
+   film: 'Film-like color rendition with subtle grain.',
+@@ -326,6 +347,7 @@ export function buildNegative(s: PhotoScenario): string {
+   else items.push('a second main subject');
+   if (s.look.color === 'natural') items.push('heavy color filters');
+   if (s.time === 'night' || s.time === 'dusk' || s.time === 'evening') items.push('daytime lighting in a night scene');
++  items.push(...NEGATIVE_BACKGROUND);
+   return items.join(', ');
+ }
+ 
+@@ -350,25 +372,29 @@ export function buildCore(s: PhotoScenario, length: Length): string {
+     const fg = length === 'standard' ? s.fg.slice(0, 1) : s.fg;
+     const mid = length === 'standard' ? s.mid.slice(0, 1) : s.mid;
+     const far = length === 'standard' ? s.far.slice(0, 1) : s.far;
+-    parts.push(
+-      rr.pick([
+-        `In the foreground there is ${listJoin(fg)}. Behind her are ${listJoin(mid)}, and farther back ${listJoin(far)}.`,
+-        `Foreground: ${listJoin(fg)}. Middle distance: ${listJoin(mid)}. In the background: ${listJoin(far)}.`,
+-      ]),
+-    );
++    const layers = rr.pick([
++      `In the foreground there is ${listJoin(fg)}. Behind her are ${listJoin(mid)}, and farther back ${listJoin(far)}.`,
++      `Close to the lens: ${listJoin(fg)}. Behind her: ${listJoin(mid)}, and farther back ${listJoin(far)}.`,
++      `The surroundings are ordinary and lived-in: ${listJoin(fg)} close by, ${listJoin(mid)} behind her, ${listJoin(far)} in the distance.`,
++    ]);
++    parts.push(layers);
+     parts.push(
+       s.crowd === 'incidental'
+-        ? 'She is the only main subject; a few unposed passers-by appear small and far behind her.'
++        ? 'She is the only main subject; a few unposed passers-by appear small and far behind her, caught mid-step, some turned away or partly cut off by the frame, none of them looking at the camera.'
+         : 'She is the only person in the frame.',
+     );
+     const det = length === 'standard' ? s.details.slice(0, 2) : s.details;
+     if (det.length) parts.push(`Small details: ${listJoin(det)}.`);
+-    if (length === 'detailed' && s.imperfections.length) parts.push(`Photographic imperfections: ${listJoin(s.imperfections)}.`);
+-    parts.push(r.fork('realism').pick(REALISM));
++    parts.push(...backgroundRealism(s, r.fork('auth'), length === 'detailed' ? 3 : 2, layers.startsWith('The surroundings are ordinary') ? [TIDY_LINE] : []));
++    if (s.imperfections.length) parts.push(`Photographic imperfections: ${listJoin(length === 'detailed' ? s.imperfections : s.imperfections.slice(0, 2))}.`);
++    parts.push(r.fork('realism').pick(s.look.style === 'smartphone' ? [...REALISM, ...REALISM_PHONE] : REALISM));
++    const cam = cameraCharacter(s);
++    if (cam) parts.push(cam);
+     parts.push(sharpnessSentence(s));
+     parts.push(COLOR_SENTENCE[s.look.color]);
+-    if (length === 'detailed') parts.push(STYLE_TAIL[s.look.style]);
++    if (length === 'detailed' || s.look.style === 'smartphone') parts.push(STYLE_TAIL[s.look.style]);
+   } else {
++    parts.push(...backgroundRealism(s, r.fork('auth'), 1));
+     parts.push(sharpnessSentence(s));
+     parts.push('Natural skin texture, no beauty retouching.');
+   }
+@@ -413,6 +439,13 @@ function metaItems(s: PhotoScenario, opts: RenderOptions): MetaItem[] {
+     { key: 'Длина', value: L_LENGTH[opts.length] },
+     { key: 'Версия движка', value: `${s.engine} (попытка ${s.attempt + 1})` },
+   ];
++  const ex = selfieExtras(s);
++  if (ex) {
++    m.push({ key: 'Рука с телефоном', value: ex.grip === 'both-hands' ? 'обе руки' : `${RU_HAND[ex.hand]}; ${RU_GRIP[ex.grip]}` });
++    if (ex.freeHand) m.push({ key: 'Свободная рука', value: RU_FREE_HAND[ex.freeHand] });
++  }
++  const head = headPoseFor(s, ex);
++  if (head) m.push({ key: 'Положение головы', value: RU_HEAD[head] });
+   if (s.locks.length) m.push({ key: 'Закреплено', value: s.locks.map((l) => L_LOCK[l]).join(', ') });
+   if (s.notes.length) m.push({ key: 'Примечания', value: s.notes.join(' ') });
+   return m;
+@@ -431,8 +464,17 @@ export function buildRussian(s: PhotoScenario): string {
+     s.weatherMode === 'irrelevant'
+       ? `Время суток: ${L_TIME[s.time].toLowerCase()}. Освещение — искусственное, по месту.`
+       : `${L_SEASON[s.season]}, ${s.weather ? L_WEATHER[s.weather].toLowerCase() : ''}, ${L_TIME[s.time].toLowerCase()}.`.replace(/, ,/g, ','),
+-    `Формат кадра ${s.ratio.label}; фон по умолчанию чёткий и читаемый. Подробные детали фона — в английском тексте.`,
++    `Формат кадра ${s.ratio.label}; фон описан как обычное, не постановочное место. Подробные детали фона — в английском тексте.`,
+   ];
++  const ex = selfieExtras(s);
++  const head = headPoseFor(s, ex);
++  const extra: string[] = [];
++  if (ex) {
++    const hold = ex.grip === 'both-hands' ? 'в обеих руках' : `в ${s.hand === 'left' ? 'левой' : 'правой'} руке`;
++    extra.push(`Телефон: ${hold}, ${RU_GRIP[ex.grip].toLowerCase()}${ex.freeHand ? `; свободная рука — ${RU_FREE_HAND[ex.freeHand]}` : ''}.`);
++  }
++  if (head) extra.push(`Положение головы: ${RU_HEAD[head].toLowerCase()}.`);
++  if (extra.length) lines.splice(3, 0, ...extra);
+   return lines.join('\n');
+ }
+ 
+diff --git a/src/render/selfie.ts b/src/render/selfie.ts
+new file mode 100644
+index 0000000..f3094c2
+--- /dev/null
++++ b/src/render/selfie.ts
+@@ -0,0 +1,274 @@
++// Селфи и положение головы. Эти детали не хранятся в сценарии: они подбираются при рендере из отдельного потока случайных
++// чисел (seed + id сценария), поэтому один и тот же кадр всегда даёт один и тот же текст, а выбор остальных параметров
++// сценария (сцена, одежда, ракурс и т. д.) не меняется. Сценарии из истории без новых полей рендерятся так же.
++import type { PhotoScenario } from '../core/types.ts';
++import type { Capture } from '../core/vocab.ts';
++import { createRng } from '../engine/rng.ts';
++import type { Rng } from '../engine/rng.ts';
++
++export type Hand = PhotoScenario['hand'];
++export type Grip = 'extended' | 'high' | 'low' | 'bent' | 'side' | 'both-hands' | 'chest' | 'face' | 'shoulder' | 'waist';
++export type HeadPose = 'level' | 'tilt-left' | 'tilt-right' | 'chin-down' | 'chin-up' | 'turn-left' | 'turn-right' | 'lean-in' | 'laugh-back';
++export type EyeLine = 'lens' | 'screen';
++export type FreeHandId = 'hair' | 'glasses' | 'collar' | 'pocket' | 'strap' | 'necklace' | 'wave' | 'chin' | 'peace' | 'relaxed' | 'lean' | 'swing';
++
++export interface SelfieExtras {
++  /** Рука, держащая телефон (при хвате двумя руками — основная). */
++  hand: Hand;
++  grip: Grip;
++  /** С какого края кадра входит рука с телефоном (в кадре, а не анатомически). */
++  armSide: 'left' | 'right';
++  head: HeadPose;
++  eyes: EyeLine;
++  freeHand: FreeHandId | null;
++}
++
++const ARM: readonly Capture[] = ['selfie-arm', 'front-camera'];
++const MIRROR: readonly Capture[] = ['selfie-mirror', 'selfie-reflection'];
++export const isArmSelfie = (c: Capture): boolean => ARM.includes(c);
++export const isMirrorSelfie = (c: Capture): boolean => MIRROR.includes(c);
++
++type Table<T extends string> = ReadonlyArray<readonly [T, number]>;
++
++function weightedPick<T extends string>(r: Rng, table: Table<T>, fallback: T): T {
++  return r.weighted(table, ([, w]) => w)?.[0] ?? fallback;
++}
++
++// ───────── хват телефона ─────────
++
++function gripTable(s: PhotoScenario): Table<Grip> {
++  if (isMirrorSelfie(s.capture)) {
++    return [
++      ['chest', 3],
++      ['face', 1.3],
++      ['shoulder', 1.3],
++      ['waist', 1],
++    ];
++  }
++  const free = s.action.hands === 0;
++  const w: Record<Grip, number> = { extended: 3, high: 1.4, low: 0.9, bent: 1.2, side: 1.2, 'both-hands': free ? 1.8 : 0, chest: 0, face: 0, shoulder: 0, waist: 0 };
++  switch (s.angle) {
++    case 'slightly-above':
++      Object.assign(w, { high: 6, extended: 2.2, low: 0, bent: 0.4, 'both-hands': w['both-hands'] * 0.5 });
++      break;
++    case 'slightly-below':
++      Object.assign(w, { low: 6, high: 0, extended: 1.2, bent: w.bent * 0.5 });
++      break;
++    case 'close-up':
++      Object.assign(w, { bent: 6, extended: 0.6, high: 0.8, low: 0.8, side: 0.5, 'both-hands': 0 });
++      break;
++    case 'three-quarter':
++      Object.assign(w, { side: 4, extended: 3 });
++      break;
++    case 'dynamic-tilt':
++      Object.assign(w, { side: 3.2, high: 2.4 });
++      break;
++    default:
++      w['both-hands'] *= 1.5;
++      w.bent *= 1.2;
++  }
++  if (s.framing === 'close-up') Object.assign(w, { bent: w.bent * 2.4, extended: w.extended * 0.5, 'both-hands': 0 });
++  if (s.framing === 'waist-up') w['both-hands'] *= 1.3;
++  if (s.capture === 'front-camera') Object.assign(w, { low: w.low * 2, bent: w.bent * 1.6, extended: w.extended * 0.4, side: w.side * 0.6, high: w.high * 0.8 });
++  return (Object.keys(w) as Grip[]).map((g) => [g, w[g]] as const);
++}
++
++// ───────── положение головы ─────────
++
++function headTable(s: PhotoScenario, grip: Grip | null): Table<HeadPose> {
++  const e = s.emotion;
++  const a = s.angle;
++  const turn = a === 'three-quarter' ? 3 : a === 'front' ? 0.7 : 1.3;
++  const w: Record<HeadPose, number> = {
++    level: e === 'laugh' ? 0.5 : 1.6,
++    'tilt-left': 2,
++    'tilt-right': 2,
++    'chin-down': a === 'slightly-above' ? 3.4 : a === 'slightly-below' ? 0 : 1.3,
++    'chin-up': a === 'slightly-below' ? 3 : a === 'slightly-above' ? 0.2 : 0.8,
++    'turn-left': turn,
++    'turn-right': turn,
++    'lean-in': grip === 'bent' || a === 'close-up' ? 2 : 0.15,
++    'laugh-back': e === 'laugh' ? 1.8 : 0,
++  };
++  if (e === 'thoughtful') Object.assign(w, { 'chin-down': w['chin-down'] * 1.6, 'chin-up': w['chin-up'] * 0.5 });
++  if (e === 'surprise') w['chin-up'] *= 1.4;
++  if (!isArmSelfie(s.capture) && !isMirrorSelfie(s.capture)) w['lean-in'] = 0;
++  return (Object.keys(w) as HeadPose[]).map((h) => [h, w[h]] as const);
++}
++
++export const HEAD_EN: Record<HeadPose, string> = {
++  level: 'her head held level',
++  'tilt-left': 'her head tilted slightly toward her left shoulder',
++  'tilt-right': 'her head tilted slightly toward her right shoulder',
++  'chin-down': 'her chin slightly lowered',
++  'chin-up': 'her chin lifted a little',
++  'turn-left': 'her head turned a few degrees to her left',
++  'turn-right': 'her head turned a few degrees to her right',
++  'lean-in': 'her head leaning in toward the phone',
++  'laugh-back': 'her head tipped slightly back as she laughs',
++};
++
++/** Положение головы нужно там, где она смотрит в камеру: селфи, съёмка по таймеру и снимок от знакомого. */
++export function headPoseFor(s: PhotoScenario, extras: SelfieExtras | null = selfieExtras(s)): HeadPose | null {
++  if (extras) return extras.head;
++  if ((s.capture === 'tripod-timer' || s.capture === 'by-acquaintance') && s.gaze === 'camera' && s.faceVisibility === 'full') {
++    return weightedPick(createRng(`${s.seed}:${s.id}:head`), headTable(s, null), 'level');
++  }
++  return null;
++}
++
++// ───────── свободная рука ─────────
++
++const WARM = /\b(coat|jacket|hoodie|cardigan|blazer|parka|windbreaker|sweatshirt)\b/i;
++const POCKETS = /\b(jeans|trousers|pants|shorts|overalls|joggers|cargo)\b/i;
++const BAGS = ['backpack', 'tote-bag', 'crossbody-bag'];
++/** Если в описании действия уже названы руки, карманы или пальцы, свободная рука не добавляется — иначе возможны противоречия. */
++const HANDS_IN_ACTION = /\b(hands?|pockets?|palms?|arms?|fingers?|wrists?)\b/i;
++
++function freeHandTable(s: PhotoScenario): Table<FreeHandId> {
++  const close = s.framing === 'close-up' || s.framing === 'portrait';
++  const warm = WARM.test(s.outfit.en);
++  const pockets = warm || POCKETS.test(s.outfit.en);
++  const covered = s.accessories.includes('hood-up') || s.accessories.includes('beanie');
++  return [
++    ['hair', covered ? 0.4 : 2],
++    ['glasses', s.subject.glasses !== 'none' ? 0.9 : 0],
++    ['collar', warm ? 1 : 0],
++    ['pocket', pockets && !close ? 1.2 : 0],
++    ['strap', s.accessories.some((a) => BAGS.includes(a)) && !close ? 1.2 : 0],
++    ['necklace', s.accessories.includes('necklace') ? 1 : 0],
++    ['wave', ['natural-smile', 'laugh', 'playful', 'surprise'].includes(s.emotion) ? 1 : 0],
++    ['chin', close && ['thoughtful', 'calm-friendly', 'neutral'].includes(s.emotion) ? 1 : 0],
++    ['peace', ['playful', 'laugh'].includes(s.emotion) ? 0.5 : 0],
++    ['relaxed', close ? 0 : 1.4],
++    ['lean', s.action.posture === 'lean' ? 2 : 0],
++    ['swing', s.action.posture === 'walk' && !close ? 1.4 : 0],
++  ];
++}
++
++export const FREE_HAND_EN: Record<FreeHandId, string> = {
++  hair: 'pushing her hair back from her face',
++  glasses: 'resting on the frame of her glasses',
++  collar: 'holding the collar of her clothes',
++  pocket: 'tucked into a pocket',
++  strap: 'resting on the strap of her bag',
++  necklace: 'lightly touching her necklace',
++  wave: 'raised in a small casual wave',
++  chin: 'resting lightly against her chin',
++  peace: 'making a peace sign near her cheek',
++  relaxed: 'hanging relaxed at her side',
++  lean: 'resting on the surface she is leaning on',
++  swing: 'swinging naturally as she walks',
++};
++
++// ───────── сборка параметров ─────────
++
++export function selfieExtras(s: PhotoScenario): SelfieExtras | null {
++  const arm = isArmSelfie(s.capture);
++  if (!arm && !isMirrorSelfie(s.capture)) return null;
++  const r = createRng(`${s.seed}:${s.id}:selfie`);
++  const grip = weightedPick(r.fork('grip'), gripTable(s), arm ? 'extended' : 'chest');
++  const head = weightedPick(r.fork('head'), headTable(s, grip), 'level');
++  const sun = s.subject.glasses === 'sunglasses';
++  const eyes: EyeLine = arm && !sun && r.fork('eyes').chance(0.3) ? 'screen' : 'lens';
++  const free = s.action.hands === 0 && !HANDS_IN_ACTION.test(s.action.en) && grip !== 'both-hands' && r.fork('free-on').chance(0.85) ? weightedPick(r.fork('free'), freeHandTable(s), 'relaxed') : null;
++  // Селфи на вытянутой руке в немзеркальном кадре: правая рука входит с левого края; в зеркале — с того же края.
++  const armSide: SelfieExtras['armSide'] = arm ? (s.hand === 'right' ? 'left' : 'right') : s.hand;
++  return { hand: s.hand, grip, armSide, head, eyes, freeHand: free };
++}
++
++// ───────── тексты ─────────
++
++function freeHandText(s: PhotoScenario, id: FreeHandId): string {
++  if (id === 'relaxed' && isArmSelfie(s.capture)) return `${FREE_HAND_EN.relaxed}, mostly out of frame`;
++  return FREE_HAND_EN[id];
++}
++
++function armSentence(s: PhotoScenario, ex: SelfieExtras, r: Rng): string {
++  const { hand, armSide: side } = ex;
++  const intro =
++    s.capture === 'front-camera'
++      ? r.pick(['A quick front-camera snapshot, framed like a video-call still:', "A casual shot on the phone's front camera:"])
++      : r.pick(['A casual front-camera selfie:', "A quick selfie on her phone's front camera:", 'A spontaneous front-camera selfie:']);
++  const grip: Record<Grip, string> = {
++    extended: `she holds the phone at arm's length in her ${hand} hand, the arm entering from the ${side} edge of the frame, foreshortened, with the phone hidden behind her hand`,
++    high: `she holds the phone up and a little toward the ${side} side of the frame in her ${hand} hand, so the camera looks slightly down at her, her raised forearm cutting into the ${side} edge of the frame, the phone out of sight`,
++    low: `she holds the phone low in her ${hand} hand and tilts it up toward her face, the arm coming in from the bottom ${side} corner of the frame, the phone out of sight`,
++    bent: `she holds the phone close in her ${hand} hand with the elbow bent, so her face fills most of the frame and only a bit of her shoulder or forearm shows, the phone out of sight`,
++    side: `she holds the phone out toward the ${side} side in her ${hand} hand, so the camera catches her from a slight angle, the arm partly visible along the ${side} edge of the frame and the phone out of sight`,
++    'both-hands': 'she steadies the phone with both hands in front of her, only her fingers and wrists showing at the bottom of the frame and the phone hidden behind them',
++    chest: '',
++    face: '',
++    shoulder: '',
++    waist: '',
++  };
++  const free = ex.freeHand ? ` Her free hand is ${freeHandText(s, ex.freeHand)}.` : '';
++  return `${intro} ${grip[ex.grip]}.${free}`;
++}
++
++function mirrorSentence(s: PhotoScenario, ex: SelfieExtras): string {
++  const pos: Partial<Record<Grip, string>> = {
++    chest: 'at chest height',
++    face: 'up in front of the lower part of her face',
++    shoulder: 'raised beside her shoulder with the screen turned toward the mirror',
++    waist: 'low at her waist, tilted up toward the mirror',
++  };
++  const where = pos[ex.grip] ?? 'at chest height';
++  const free = ex.freeHand ? ` Her free hand is ${freeHandText(s, ex.freeHand)}.` : '';
++  if (s.capture === 'selfie-reflection') {
++    return `A selfie caught in the reflection of a large glass surface: she holds a phone in her ${ex.hand} hand ${where}, and both she and the phone appear in the reflection.${free}`;
++  }
++  return `A mirror selfie: she holds a phone in her ${ex.hand} hand ${where}, and the phone is visible in the mirror next to her reflection.${free}`;
++}
++
++/** Предложение о способе съёмки для всех видов селфи (ЗАМЕНЯЕТ прежние однотипные шаблоны). */
++export function selfieCaptureSentence(s: PhotoScenario, ex: SelfieExtras, r: Rng): string {
++  return isMirrorSelfie(s.capture) ? mirrorSentence(s, ex) : armSentence(s, ex, r);
++}
++
++/** Куда смотрят глаза у селфи на вытянутой руке (null — оставить прежнюю формулировку). */
++export function selfieGazePhrase(s: PhotoScenario, ex: SelfieExtras | null): string | null {
++  if (!ex || !isArmSelfie(s.capture) || s.subject.glasses === 'sunglasses') return null;
++  return ex.eyes === 'screen' ? 'her gaze resting on her own image on the phone screen, just below the lens' : 'looking straight into the front camera';
++}
++
++// ───────── подписи для интерфейса ─────────
++
++export const RU_HAND: Record<Hand, string> = { left: 'левая', right: 'правая' };
++export const RU_GRIP: Record<Grip, string> = {
++  extended: 'рука вытянута вперёд',
++  high: 'телефон выше уровня глаз',
++  low: 'телефон ниже подбородка',
++  bent: 'рука согнута, телефон близко',
++  side: 'телефон в стороне от лица',
++  'both-hands': 'телефон в двух руках',
++  chest: 'телефон на уровне груди',
++  face: 'телефон перед нижней частью лица',
++  shoulder: 'телефон у плеча',
++  waist: 'телефон на уровне талии',
++};
++export const RU_HEAD: Record<HeadPose, string> = {
++  level: 'голова ровно',
++  'tilt-left': 'наклон к левому плечу',
++  'tilt-right': 'наклон к правому плечу',
++  'chin-down': 'подбородок чуть опущен',
++  'chin-up': 'подбородок чуть поднят',
++  'turn-left': 'поворот головы влево',
++  'turn-right': 'поворот головы вправо',
++  'lean-in': 'голова наклонена к телефону',
++  'laugh-back': 'голова чуть запрокинута от смеха',
++};
++export const RU_FREE_HAND: Record<FreeHandId, string> = {
++  hair: 'поправляет волосы',
++  glasses: 'у оправы очков',
++  collar: 'держит воротник',
++  pocket: 'в кармане',
++  strap: 'на ремне сумки',
++  necklace: 'касается украшения на шее',
++  wave: 'приветственный взмах',
++  chin: 'у подбородка',
++  peace: 'знак «мир» у щеки',
++  relaxed: 'расслабленно опущена',
++  lean: 'опирается на поверхность',
++  swing: 'свободно в движении',
++};
+diff --git a/tests/extension-bridge.test.ts b/tests/extension-bridge.test.ts
+new file mode 100644
+index 0000000..4a59009
+--- /dev/null
++++ b/tests/extension-bridge.test.ts
+@@ -0,0 +1,262 @@
++import { describe, expect, it } from 'vitest';
++import { BUILTIN_PRESETS } from '../src/core/presets.ts';
++import { safetyProblems } from '../src/core/safety.ts';
++import { normalizeSettings } from '../src/core/settings.ts';
++import type { Character } from '../src/core/types.ts';
++import { generateScenario } from '../src/engine/generate.ts';
++import { installExtensionBridge } from '../src/extension-bridge/bridge.ts';
++import type { BridgeWindow } from '../src/extension-bridge/bridge.ts';
++import { buildBatch, BridgeFailure, canonicalJson, coreDistance, coreOf, defaultSha256 } from '../src/extension-bridge/build-batch.ts';
++import type { Batch } from '../src/extension-bridge/build-batch.ts';
++import { BRIDGE_VERSION, CHANNEL_EXT, parseCreateBatch, parseRequest } from '../src/extension-bridge/protocol.ts';
++import type { CreateBatchPayload } from '../src/extension-bridge/protocol.ts';
++
++const ORIGIN = 'https://promts.vibecods.xyz';
++
++const payload = (over: Partial<CreateBatchPayload> = {}): CreateBatchPayload => ({
++  mode: 'multi',
++  characters: 3,
++  frames_per_character: 5,
++  strategy: 'character',
++  preset_id: 'natural-selfie',
++  seed: 'RP-TESTSEED',
++  profile: 'gpt-image',
++  length: 'standard',
++  include_negative: true,
++  use_site_character: false,
++  ...over,
++});
++
++const FIXED = () => new Date('2026-10-17T12:00:00.000Z');
++
++describe('protocol: parseRequest', () => {
++  const ok = { source: CHANNEL_EXT, version: BRIDGE_VERSION, id: 'req-1', type: 'hello' };
++  it('принимает корректный запрос', () => {
++    expect(parseRequest(ok).ok).toBe(true);
++  });
++  it.each([
++    [null, 'BAD_REQUEST'],
++    [[], 'BAD_REQUEST'],
++    [{ ...ok, source: 'evil' }, 'BAD_SOURCE'],
++    [{ ...ok, version: 2 }, 'VERSION_MISMATCH'],
++    [{ ...ok, id: '' }, 'BAD_ID'],
++    [{ ...ok, id: 'a b' }, 'BAD_ID'],
++    [{ ...ok, id: 'x'.repeat(65) }, 'BAD_ID'],
++    [{ ...ok, type: 'drop-tables' }, 'BAD_TYPE'],
++  ])('отклоняет %j', (data, code) => {
++    const r = parseRequest(data);
++    expect(r.ok).toBe(false);
++    if (!r.ok) expect(r.error.code).toBe(code);
++  });
++});
++
++describe('protocol: parseCreateBatch', () => {
++  it('принимает корректные параметры и фиксирует одного персонажа в режиме single', () => {
++    const r = parseCreateBatch(payload({ mode: 'single', characters: 99 }));
++    expect(r.ok).toBe(true);
++    if (r.ok) expect(r.value.characters).toBe(1);
++  });
++  it.each([
++    [{ characters: 0 }, 'BAD_PAYLOAD'],
++    [{ characters: 51 }, 'BAD_PAYLOAD'],
++    [{ frames_per_character: 0 }, 'BAD_PAYLOAD'],
++    [{ frames_per_character: 101 }, 'BAD_PAYLOAD'],
++    [{ characters: 50, frames_per_character: 40 }, 'TOO_LARGE'],
++    [{ strategy: 'x' }, 'BAD_PAYLOAD'],
++    [{ profile: 'x' }, 'BAD_PAYLOAD'],
++    [{ length: 'x' }, 'BAD_PAYLOAD'],
++    [{ seed: 'a b' }, 'BAD_PAYLOAD'],
++    [{ seed: '' }, 'BAD_PAYLOAD'],
++    [{ preset_id: 5 }, 'BAD_PAYLOAD'],
++    [{ include_negative: 'yes' }, 'BAD_PAYLOAD'],
++    [{ characters: 2.5 }, 'BAD_PAYLOAD'],
++  ] as const)('отклоняет %j', (over, code) => {
++    const r = parseCreateBatch({ ...payload(), ...over });
++    expect(r.ok).toBe(false);
++    if (!r.ok) expect(r.error.code).toBe(code);
++  });
++  it('seed и preset_id могут быть null', () => {
++    expect(parseCreateBatch(payload({ seed: null, preset_id: null })).ok).toBe(true);
++  });
++});
++
++describe('buildBatch на реальном движке', () => {
++  it('3 персонажа × 5 кадров: структура, идентификаторы, безопасность, неизменное ядро', async () => {
++    const b = await buildBatch(payload(), { origin: ORIGIN, now: FIXED });
++    expect(b.schema).toBe('rps-batch/1');
++    expect(b.batch_id).toMatch(/^RPS-[0-9a-f]{10}$/);
++    expect(b.created_at).toBe('2026-10-17T12:00:00.000Z');
++    expect(b.characters).toHaveLength(3);
++    const ids = new Set<string>();
++    for (const [ci, c] of b.characters.entries()) {
++      expect(c.character_id).toBe(`${b.batch_id}-C00${ci + 1}`);
++      expect(c.jobs).toHaveLength(5);
++      expect(c.identity.fingerprint).toBe(await defaultSha256(canonicalJson(c.identity.core)));
++      for (const [ji, j] of c.jobs.entries()) {
++        expect(j.image_job_id).toBe(`${c.character_id}-F00${ji + 1}`);
++        expect(ids.has(j.image_job_id)).toBe(false);
++        ids.add(j.image_job_id);
++        expect(j.prompt.length).toBeGreaterThan(200);
++        expect(safetyProblems(j.prompt, { allowTextTerms: true })).toEqual([]);
++        expect(j.negative).toBeTruthy();
++        expect(j.reference).toBeNull();
++        expect(j.params.scenario_id).toBeTruthy();
++      }
++    }
++    expect(ids.size).toBe(15);
++  });
++
++  it('параметры задания содержат детали селфи и положение головы (для метаданных расширения)', async () => {
++    const b = await buildBatch(payload({ characters: 2, frames_per_character: 12, seed: 'RP-SELFIEPARAMS' }), { origin: ORIGIN, now: FIXED });
++    const jobs = b.characters.flatMap((c) => c.jobs);
++    const selfies = jobs.filter((j) => j.params.selfie_hand !== undefined);
++    expect(selfies.length).toBeGreaterThan(3);
++    for (const j of selfies) {
++      expect(['left', 'right']).toContain(j.params.selfie_hand);
++      expect(typeof j.params.selfie_grip).toBe('string');
++      expect(typeof j.params.head_pose).toBe('string');
++      expect(j.prompt).toContain(j.params.selfie_grip === 'both-hands' ? 'with both hands' : `in her ${String(j.params.selfie_hand)} hand`);
++    }
++    expect(new Set(selfies.map((j) => j.params.selfie_hand)).size).toBe(2);
++    expect(new Set(selfies.map((j) => j.params.head_pose)).size).toBeGreaterThan(2);
++  });
++
++  it('идемпотентность: одинаковый запрос → одинаковые id и промпты; другой seed → другой batch_id', async () => {
++    const a = await buildBatch(payload(), { origin: ORIGIN, now: FIXED });
++    const b = await buildBatch(payload(), { origin: ORIGIN, now: () => new Date('2030-01-01T00:00:00Z') });
++    expect(b.batch_id).toBe(a.batch_id);
++    expect(b.characters.map((c) => c.jobs.map((j) => j.prompt))).toEqual(a.characters.map((c) => c.jobs.map((j) => j.prompt)));
++    const c = await buildBatch(payload({ seed: 'RP-OTHERSEED' }), { origin: ORIGIN, now: FIXED });
++    expect(c.batch_id).not.toBe(a.batch_id);
++  });
++
++  it('персонажи различаются, внутри персонажа ядро внешности постоянно (20 × 10)', async () => {
++    const b = await buildBatch(payload({ characters: 20, frames_per_character: 10, preset_id: null, seed: 'RP-BIGBATCH' }), { origin: ORIGIN, now: FIXED });
++    expect(b.characters).toHaveLength(20);
++    const flagged = b.characters.filter((c) => c.notes.length > 0).length;
++    expect(flagged).toBeLessThanOrEqual(2);
++    for (let i = 0; i < b.characters.length; i++)
++      for (let j = i + 1; j < b.characters.length; j++) {
++        const dist = coreDistance(b.characters[i]!.identity.core, b.characters[j]!.identity.core);
++        if (b.characters[i]!.notes.length === 0 && b.characters[j]!.notes.length === 0) expect(dist).toBeGreaterThanOrEqual(1);
++      }
++    const total = b.characters.reduce((n, c) => n + c.jobs.length, 0);
++    expect(total).toBe(200);
++  }, 60_000);
++
++  it('серия: один персонаж × 8 кадров, ядро постоянно, меняется только стайлинг', async () => {
++    const b = await buildBatch(payload({ mode: 'single', characters: 1, frames_per_character: 8, strategy: 'series' }), { origin: ORIGIN, now: FIXED });
++    expect(b.characters).toHaveLength(1);
++    expect(b.characters[0]!.jobs).toHaveLength(8);
++    const scenes = new Set(b.characters[0]!.jobs.map((j) => j.params.scene_id));
++    expect(scenes.size).toBe(8);
++  });
++
++  it('использует персонажа сайта как первого персонажа', async () => {
++    const s = normalizeSettings({ mode: 'new' }).settings;
++    const g = generateScenario({ settings: s, seed: 'SITE-CH', index: 0 });
++    if (!g.ok) throw new Error('gen');
++    const ch: Character = { id: 'CH-SITE', name: 'Сайт', subject: g.result.scenario.subject, createdAt: 1 };
++    const b = await buildBatch(payload({ use_site_character: true, characters: 2 }), { origin: ORIGIN, now: FIXED, siteCharacter: () => ch });
++    expect(canonicalJson(b.characters[0]!.identity.core)).toBe(canonicalJson(coreOf(ch.subject)));
++    await expect(buildBatch(payload({ use_site_character: true }), { origin: ORIGIN, siteCharacter: () => null })).rejects.toMatchObject({ code: 'NO_SITE_CHARACTER' });
++  });
++
++  it('неизвестный пресет и отмена', async () => {
++    await expect(buildBatch(payload({ preset_id: 'nope' }), { origin: ORIGIN })).rejects.toBeInstanceOf(BridgeFailure);
++    const ctl = new AbortController();
++    ctl.abort();
++    await expect(buildBatch(payload(), { origin: ORIGIN, signal: ctl.signal })).rejects.toMatchObject({ code: 'CANCELLED' });
++  });
++
++  it('использует пользовательский пресет', async () => {
++    const user = { id: 'user-1', name: 'Мой', settings: BUILTIN_PRESETS[3]!.settings };
++    const b = await buildBatch(payload({ preset_id: 'user-1', characters: 1, mode: 'single', frames_per_character: 3 }), { origin: ORIGIN, userPresets: () => [user] });
++    expect(b.characters[0]!.jobs).toHaveLength(3);
++  });
++});
++
++function makeWin(origin = ORIGIN) {
++  const listeners = new Set<(ev: MessageEvent) => void>();
++  const sent: Array<Record<string, unknown>> = [];
++  const win: BridgeWindow = {
++    location: { origin },
++    addEventListener: (_t, fn) => void listeners.add(fn),
++    removeEventListener: (_t, fn) => void listeners.delete(fn),
++    postMessage: (m) => void sent.push(m as Record<string, unknown>),
++  };
++  const emit = (data: unknown, over: { origin?: string; source?: unknown } = {}): void => {
++    for (const l of [...listeners]) l({ data, origin: over.origin ?? origin, source: 'source' in over ? over.source : win } as unknown as MessageEvent);
++  };
++  const waitFor = async (pred: (m: Record<string, unknown>) => boolean, ms = 30_000): Promise<Record<string, unknown>> => {
++    const t0 = Date.now();
++    while (Date.now() - t0 < ms) {
++      const m = sent.find(pred);
++      if (m) return m;
++      await new Promise((r) => setTimeout(r, 5));
++    }
++    throw new Error('timeout waiting for message');
++  };
++  return { win, sent, emit, waitFor, listeners };
++}
++
++const req = (id: string, type: string, p?: unknown) => ({ source: CHANNEL_EXT, version: BRIDGE_VERSION, id, type, payload: p });
++
++describe('installExtensionBridge', () => {
++  it('отвечает на hello и list-presets, содержит встроенные пресеты', async () => {
++    const { win, emit, waitFor } = makeWin();
++    installExtensionBridge(win);
++    emit(req('h1', 'hello'));
++    const hello = await waitFor((m) => m.id === 'h1');
++    expect(hello).toMatchObject({ source: 'rps-site', version: 1, ok: true, type: 'hello:result' });
++    expect((hello.payload as { limits: { maxCharacters: number } }).limits.maxCharacters).toBe(50);
++    emit(req('p1', 'list-presets'));
++    const pr = await waitFor((m) => m.id === 'p1');
++    const ids = (pr.payload as { presets: Array<{ id: string }> }).presets.map((p) => p.id);
++    expect(ids).toContain('natural-selfie');
++    expect(ids.length).toBeGreaterThanOrEqual(7);
++  });
++
++  it('игнорирует чужие origin и source; на мусор с валидным id отвечает ошибкой', async () => {
++    const { win, sent, emit, listeners } = makeWin();
++    const off = installExtensionBridge(win);
++    emit(req('x1', 'hello'), { origin: 'https://evil.example' });
++    emit(req('x2', 'hello'), { source: {} });
++    emit(req('x3', 'hello'), { source: null });
++    emit('строка');
++    emit({ source: 'other', id: 'x4', type: 'hello' });
++    await new Promise((r) => setTimeout(r, 30));
++    expect(sent).toHaveLength(0);
++    emit({ source: CHANNEL_EXT, version: 1, id: 'x5', type: 'drop-tables' });
++    expect(sent).toHaveLength(1);
++    expect(sent[0]).toMatchObject({ id: 'x5', ok: false, error: { code: 'BAD_TYPE' } });
++    off();
++    expect(listeners.size).toBe(0);
++  });
++
++  it('create-batch: прогресс и результат; повторный параллельный запрос получает BUSY', async () => {
++    const { win, sent, emit, waitFor } = makeWin();
++    installExtensionBridge(win);
++    emit(req('b1', 'create-batch', payload({ characters: 2, frames_per_character: 4 })));
++    emit(req('b2', 'create-batch', payload()));
++    const busy = await waitFor((m) => m.id === 'b2');
++    expect(busy).toMatchObject({ ok: false, error: { code: 'BUSY' } });
++    const res = await waitFor((m) => m.id === 'b1' && m.type === 'create-batch:result');
++    expect(res.ok).toBe(true);
++    const batch = (res.payload as { batch: Batch }).batch;
++    expect(batch.characters).toHaveLength(2);
++    expect(sent.filter((m) => m.id === 'b1' && m.type === 'create-batch:progress').length).toBe(8);
++  });
++
++  it('create-batch: плохие параметры → ошибка без падения; cancel прерывает создание', async () => {
++    const { win, emit, waitFor } = makeWin();
++    installExtensionBridge(win);
++    emit(req('e1', 'create-batch', { mode: 'multi' }));
++    expect(await waitFor((m) => m.id === 'e1')).toMatchObject({ ok: false, error: { code: 'BAD_PAYLOAD' } });
++    emit(req('c1', 'create-batch', payload({ characters: 30, frames_per_character: 30 })));
++    await new Promise((r) => setTimeout(r, 20));
++    emit(req('c2', 'cancel', { target: 'c1' }));
++    expect(await waitFor((m) => m.id === 'c2')).toMatchObject({ ok: true, payload: { cancelled: true } });
++    expect(await waitFor((m) => m.id === 'c1' && m.type === 'create-batch:result')).toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
++  }, 60_000);
++});
+diff --git a/tests/selfie-realism.test.ts b/tests/selfie-realism.test.ts
+new file mode 100644
+index 0000000..6dfb479
+--- /dev/null
++++ b/tests/selfie-realism.test.ts
+@@ -0,0 +1,276 @@
++import { describe, expect, it } from 'vitest';
++import { safetyProblems } from '../src/core/safety.ts';
++import { defaultSettings, normalizeSettings } from '../src/core/settings.ts';
++import type { Settings } from '../src/core/settings.ts';
++import type { PhotoScenario } from '../src/core/types.ts';
++import { CAPTURES } from '../src/core/vocab.ts';
++import type { Capture } from '../src/core/vocab.ts';
++import { SCENE_BY_ID } from '../src/data/scenes/index.ts';
++import { ENGINE_VERSION } from '../src/engine/compose.ts';
++import { generateScenario } from '../src/engine/generate.ts';
++import { buildNegative, renderScenario } from '../src/render/render.ts';
++import { FREE_HAND_EN, HEAD_EN, headPoseFor, isArmSelfie, isMirrorSelfie, selfieExtras } from '../src/render/selfie.ts';
++import { contradictions } from './helpers.ts';
++
++function settingsFor(capture: Capture | null, patch?: (s: Settings) => void): Settings {
++  const s = defaultSettings();
++  if (capture) for (const c of CAPTURES) s.captureShares[c] = c === capture ? 100 : 0;
++  patch?.(s);
++  return normalizeSettings({ ...s, mode: 'new' }).settings;
++}
++
++function frames(capture: Capture | null, n: number, prefix: string, patch?: (s: Settings) => void): PhotoScenario[] {
++  const st = settingsFor(capture, patch);
++  const out: PhotoScenario[] = [];
++  for (let i = 0; i < n; i++) {
++    const g = generateScenario({ settings: st, seed: `${prefix}-${i}`, index: i });
++    if (g.ok) out.push(g.result.scenario);
++  }
++  return out;
++}
++
++const render = (s: PhotoScenario, length: 'short' | 'standard' | 'detailed' = 'standard') => renderScenario(s, { profile: 'gpt-image', length, includeNegative: true });
++const share = (xs: string[], v: string): number => xs.filter((x) => x === v).length / xs.length;
++const maxShare = (xs: string[]): number => Math.max(...[...new Set(xs)].map((v) => share(xs, v)));
++
++const ARM = [...frames('selfie-arm', 300, 'SR-arm'), ...frames('front-camera', 300, 'SR-front')];
++const MIRROR = [...frames('selfie-mirror', 250, 'SR-mirror'), ...frames('selfie-reflection', 120, 'SR-glass')];
++
++describe('селфи: рука с телефоном', () => {
++  it('в тексте всегда названа рука (или обе руки), а сторона входа руки в кадр согласована с ней', () => {
++    for (const s of [...ARM, ...MIRROR]) {
++      const ex = selfieExtras(s)!;
++      const text = render(s).main;
++      if (ex.grip === 'both-hands') expect(text).toContain('with both hands');
++      else expect(text, s.id).toContain(`in her ${ex.hand} hand`);
++      const m = /the arm entering from the (left|right) edge of the frame/.exec(text);
++      if (m) expect(m[1]).toBe(ex.hand === 'right' ? 'left' : 'right');
++    }
++  });
++
++  it('левая и правая рука встречаются примерно поровну', () => {
++    for (const set of [ARM, MIRROR]) {
++      const hands = set.map((s) => selfieExtras(s)!.hand);
++      expect(share(hands, 'left')).toBeGreaterThan(0.4);
++      expect(share(hands, 'left')).toBeLessThan(0.6);
++    }
++  });
++
++  it('хваты разнообразны, а ракурс не противоречит хвату', () => {
++    const grips = ARM.map((s) => selfieExtras(s)!.grip);
++    expect(new Set(grips).size).toBeGreaterThanOrEqual(5);
++    expect(maxShare(grips)).toBeLessThan(0.4);
++    for (const s of ARM) {
++      const g = selfieExtras(s)!.grip;
++      if (s.angle === 'slightly-above') expect(g).not.toBe('low');
++      if (s.angle === 'slightly-below') expect(g).not.toBe('high');
++      if (s.framing === 'close-up') expect(g).not.toBe('both-hands');
++      if (s.action.hands > 0) expect(g).not.toBe('both-hands');
++    }
++    const mirrorGrips = MIRROR.map((s) => selfieExtras(s)!.grip);
++    expect(new Set(mirrorGrips).size).toBe(4);
++  });
++
++  it('свободная рука появляется только там, где она действительно свободна и уместна', () => {
++    let withFree = 0;
++    for (const s of [...ARM, ...MIRROR]) {
++      const ex = selfieExtras(s)!;
++      if (!ex.freeHand) continue;
++      withFree++;
++      expect(s.action.hands, s.id).toBe(0);
++      expect(s.action.en).not.toMatch(/\b(hands?|pockets?|palms?|arms?|fingers?|wrists?)\b/i);
++      expect(ex.grip).not.toBe('both-hands');
++      if (ex.freeHand === 'glasses') expect(s.subject.glasses).not.toBe('none');
++      if (ex.freeHand === 'necklace') expect(s.accessories).toContain('necklace');
++      if (ex.freeHand === 'strap') expect(s.accessories.some((a) => ['backpack', 'tote-bag', 'crossbody-bag'].includes(a))).toBe(true);
++      if (ex.freeHand === 'collar') expect(s.outfit.en).toMatch(/coat|jacket|hoodie|cardigan|blazer|parka|windbreaker|sweatshirt/i);
++      if (ex.freeHand === 'lean') expect(s.action.posture).toBe('lean');
++      expect(render(s).main).toContain(`Her free hand is ${FREE_HAND_EN[ex.freeHand]}`);
++    }
++    expect(withFree).toBeGreaterThan(40);
++  });
++
++  it('с солнцезащитными очками взгляд на экран не описывается; формат кадра не требует «руки с телефоном» целиком', () => {
++    const sun = ARM.filter((s) => s.subject.glasses === 'sunglasses');
++    expect(sun.length).toBeGreaterThan(0);
++    for (const s of sun) expect(render(s).main).not.toContain('own image on the phone screen');
++    for (const s of ARM) {
++      const text = render(s).main;
++      expect(text).not.toContain('keep her head and hands fully inside');
++      expect(text.includes('her head and free hand fully inside')).toBe(!!selfieExtras(s)!.freeHand);
++    }
++  });
++});
++
++describe('селфи: положение головы', () => {
++  it('положение головы разнообразно и согласовано с ракурсом и эмоцией', () => {
++    const heads = ARM.map((s) => selfieExtras(s)!.head);
++    expect(new Set(heads).size).toBeGreaterThanOrEqual(7);
++    expect(maxShare(heads)).toBeLessThan(0.25);
++    for (const s of [...ARM, ...MIRROR]) {
++      const h = selfieExtras(s)!.head;
++      if (s.angle === 'slightly-below') expect(h).not.toBe('chin-down');
++      if (h === 'laugh-back') expect(s.emotion).toBe('laugh');
++      expect(render(s).main.toLowerCase()).toContain(HEAD_EN[h]);
++    }
++  });
++
++  it('голова описана и при съёмке по таймеру и от знакомого (если смотрит в камеру), но не при других взглядах', () => {
++    const timer = frames('tripod-timer', 200, 'SR-timer');
++    const friend = frames('by-acquaintance', 200, 'SR-acq');
++    for (const s of [...timer, ...friend]) {
++      expect(selfieExtras(s)).toBeNull();
++      const h = headPoseFor(s);
++      if (s.gaze === 'camera' && s.faceVisibility === 'full') {
++        expect(h).not.toBeNull();
++        expect(h).not.toBe('lean-in');
++        expect(render(s).main.toLowerCase()).toContain(HEAD_EN[h!]);
++      } else expect(h).toBeNull();
++    }
++    expect(new Set([...timer, ...friend].map((s) => headPoseFor(s)).filter(Boolean)).size).toBeGreaterThanOrEqual(6);
++  });
++
++  it('взгляд на экран у селфи встречается, но не всегда', () => {
++    const eyes = ARM.filter((s) => s.subject.glasses !== 'sunglasses').map((s) => selfieExtras(s)!.eyes);
++    expect(share(eyes, 'screen')).toBeGreaterThan(0.15);
++    expect(share(eyes, 'screen')).toBeLessThan(0.45);
++  });
++});
++
++describe('селфи: ракурс в движке', () => {
++  it('чуть сверху и с наклоном — чаще, анфас — реже, чем раньше', () => {
++    const angles = ARM.map((s) => s.angle);
++    expect(share(angles, 'slightly-above')).toBeGreaterThan(0.14);
++    expect(share(angles, 'front')).toBeLessThan(0.26);
++    expect(new Set(angles).size).toBeGreaterThanOrEqual(5);
++  });
++
++  it('версия движка повышена: текст кадров изменился', () => {
++    expect(ENGINE_VERSION).not.toBe('1.0.0');
++  });
++});
++
++describe('детерминизм и совместимость', () => {
++  it('один и тот же кадр даёт один и тот же текст и одни и те же параметры селфи', () => {
++    for (const s of [...ARM.slice(0, 40), ...MIRROR.slice(0, 40)]) {
++      expect(selfieExtras(s)).toEqual(selfieExtras(structuredClone(s)));
++      expect(render(s).main).toBe(render(structuredClone(s)).main);
++    }
++  });
++
++  it('профиль и длина не меняют выбор деталей селфи', () => {
++    for (const s of ARM.slice(0, 40)) {
++      const ex = selfieExtras(s);
++      render(s, 'short');
++      render(s, 'detailed');
++      expect(selfieExtras(s)).toEqual(ex);
++    }
++  });
++
++  it('выбор остальных параметров сценария от селфи-деталей не зависит (детали берутся из отдельного потока)', () => {
++    const a = frames('selfie-arm', 20, 'SR-stable');
++    const b = frames('selfie-arm', 20, 'SR-stable');
++    expect(a.map((s) => s.id)).toEqual(b.map((s) => s.id));
++  });
++
++  it('у других способов съёмки селфи-параметров нет', () => {
++    for (const c of ['tripod-timer', 'by-acquaintance', 'by-friend-walk', 'candid'] as const) {
++      for (const s of frames(c, 30, `SR-other-${c}`)) {
++        expect(selfieExtras(s)).toBeNull();
++        expect(isArmSelfie(c) || isMirrorSelfie(c)).toBe(false);
++      }
++    }
++  });
++});
++
++describe('метаданные и сводка', () => {
++  it('в метаданных и русской сводке есть рука, хват, свободная рука и положение головы', () => {
++    const s = ARM.find((x) => selfieExtras(x)?.freeHand && selfieExtras(x)?.grip !== 'both-hands')!;
++    const r = render(s);
++    const keys = r.metadata.map((m) => m.key);
++    expect(keys).toContain('Рука с телефоном');
++    expect(keys).toContain('Свободная рука');
++    expect(keys).toContain('Положение головы');
++    expect(r.ru).toContain('Телефон:');
++    expect(r.ru).toContain('Положение головы:');
++    expect(r.ru).not.toContain('фон по умолчанию чёткий');
++    const none = frames('candid', 5, 'SR-meta-candid')[0]!;
++    expect(render(none).metadata.map((m) => m.key)).not.toContain('Рука с телефоном');
++  });
++});
++
++describe('реализм фона и кадра', () => {
++  const SAMPLE = frames(null, 240, 'SR-real');
++
++  it('нет «сценических» слоёв и «резкого везде»; есть описание обычного, не постановочного места', () => {
++    for (const s of SAMPLE) {
++      const text = render(s).main;
++      expect(text).not.toContain('Middle distance:');
++      expect(text).not.toContain('Foreground:');
++      if (s.look.style === 'smartphone' && s.look.sharpness === 'sharp') {
++        const night = s.time === 'dusk' || s.time === 'evening' || s.time === 'night';
++        expect(text).toContain(night ? 'Phone-camera low-light rendering' : 'no portrait-mode blur');
++        expect(text).not.toContain('The background stays clear and readable');
++      }
++    }
++  });
++
++  it('в стандартной длине есть минимум 2 предложения о естественности фона и (если есть) недостатки съёмки', () => {
++    const marks = [/tidied or arranged/, /edges of the frame are partly cut off/, /scenic postcard view/, /not composed like/, /plain and/, /light is uneven/, /ordinary signs of use/, /everyday wear/, /too small to read/, /differ in color temperature/];
++    for (const s of SAMPLE) {
++      const text = render(s).main;
++      const hits = marks.filter((m) => m.test(text)).length;
++      expect(hits, s.id).toBeGreaterThanOrEqual(1);
++      if (s.imperfections.length) {
++        expect(text).toContain('Photographic imperfections:');
++        expect(text).toContain(s.imperfections[0]!);
++      }
++    }
++  });
++
++  it('прохожие: подробное описание только если они есть в кадре', () => {
++    for (const s of SAMPLE) {
++      const text = render(s).main;
++      if (s.crowd === 'incidental') expect(text).toContain('caught mid-step');
++      else expect(text).toContain('She is the only person in the frame.');
++    }
++  });
++
++  it('negative содержит признаки постановочного ИИ-фона', () => {
++    const n = buildNegative(SAMPLE[0]!);
++    for (const item of ['staged or overly curated background', 'postcard-perfect scenery', 'stock photo look', 'identical faceless crowd', 'garbled signs or text in the background']) expect(n).toContain(item);
++  });
++});
++
++describe('безопасность, противоречия и размер', () => {
++  const ALL = frames(null, 700, 'SR-all');
++
++  it('нет нарушений безопасности и противоречий во всех длинах и профилях', () => {
++    for (const s of ALL) {
++      const water = SCENE_BY_ID.get(s.sceneId)?.tags.includes('water') ?? false;
++      for (const length of ['short', 'standard', 'detailed'] as const) {
++        const r = renderScenario(s, { profile: 'universal', length, includeNegative: true });
++        expect(r.problems, `${s.id} ${length}`).toEqual([]);
++        // «sun spots» — особая примета кожи (уже была в данных), а не солнечный свет: проверка по словам её не различает
++        expect(contradictions(r.main.replace(/\bsun spots\b/gi, 'age spots'), s, water), `${s.id} ${length}`).toEqual([]);
++        expect(r.main).toContain(`${s.subject.age} years old`);
++      }
++    }
++  });
++
++  it('безопасность проверена на выделенных наборах селфи', () => {
++    for (const s of [...ARM, ...MIRROR]) {
++      const core = renderScenario(s, { profile: 'universal', length: 'standard', includeNegative: false });
++      expect(core.problems, s.id).toEqual([]);
++      expect(safetyProblems(core.main, { allowTextTerms: false }), s.id).toEqual([]);
++    }
++  });
++
++  it('длина промптов укладывается в пределы (мост принимает до 8000 символов)', () => {
++    for (const s of ALL) {
++      expect(render(s, 'short').main.length).toBeLessThan(2600);
++      expect(render(s, 'standard').main.length).toBeLessThan(4400);
++      expect(render(s, 'detailed').main.length).toBeLessThan(6800);
++    }
++  });
++});

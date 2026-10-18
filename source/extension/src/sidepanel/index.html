@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>RealPhoto ChatGPT Batch</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./panel.js" defer></script>
+</head>
+<body>
+<div class="shell">
+
+  <header class="strip">
+    <div class="strip-row">
+      <h1 class="app-title" data-i18n="app.title"></h1>
+      <button type="button" class="btn btn-sm" id="btn-refresh" data-testid="btn-refresh" data-i18n="btn.refresh"></button>
+    </div>
+    <div class="chips">
+      <span class="chip" id="site-status" data-testid="site-status" data-state="unknown" data-i18n="site.unknown"></span>
+      <span class="chip" id="chatgpt-status" data-testid="chatgpt-status" data-state="unknown" data-i18n="chatgpt.unknown"></span>
+    </div>
+    <div class="strip-actions">
+      <button type="button" class="btn btn-sm" id="btn-open-site" data-testid="btn-open-site" data-i18n="btn.openSite"></button>
+      <button type="button" class="btn btn-sm" id="btn-open-chatgpt" data-testid="btn-open-chatgpt" data-i18n="btn.openChatgpt"></button>
+      <button type="button" class="btn btn-sm" id="btn-diagnose" data-testid="btn-diagnose" data-i18n="btn.diagnose"></button>
+    </div>
+    <p class="notice notice-warn" id="worker-offline" data-testid="worker-offline" role="status" hidden data-i18n="offline.message"></p>
+    <section class="diagnose" id="diagnose-report" data-testid="diagnose-report" aria-live="polite" hidden></section>
+  </header>
+
+  <div class="tabs" role="tablist" data-i18n-aria-label="tabs.aria">
+    <button type="button" role="tab" class="tab" id="tab-queue" data-testid="tab-queue" data-tab="queue" aria-controls="panel-queue" aria-selected="true" data-i18n="tab.queue"></button>
+    <button type="button" role="tab" class="tab" id="tab-settings" data-testid="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1" data-i18n="tab.settings"></button>
+    <button type="button" role="tab" class="tab" id="tab-log" data-testid="tab-log" data-tab="log" aria-controls="panel-log" aria-selected="false" tabindex="-1" data-i18n="tab.log"></button>
+    <button type="button" role="tab" class="tab" id="tab-about" data-testid="tab-about" data-tab="about" aria-controls="panel-about" aria-selected="false" tabindex="-1" data-i18n="tab.about"></button>
+  </div>
+
+  <main class="content">
+
+    <!-- ───────── Очередь ───────── -->
+    <section role="tabpanel" id="panel-queue" data-tab="queue" aria-labelledby="tab-queue">
+
+      <section class="card" aria-labelledby="h-run">
+        <h2 id="h-run" data-i18n="run.title"></h2>
+        <div class="batch-card" id="batch-card" data-testid="batch-card"></div>
+
+        <div class="runner">
+          <span class="chip chip-state" id="runner-state" data-testid="runner-state" data-state="idle" aria-live="polite"></span>
+          <p class="current-op" id="current-op" data-testid="current-op"></p>
+          <p class="muted" id="runner-note" data-testid="runner-note" hidden></p>
+          <div class="notice notice-error" id="block-message" data-testid="block-message" role="alert" hidden></div>
+        </div>
+
+        <div class="progress-block">
+          <progress id="overall-progress" data-testid="overall-progress" value="0" max="1" data-i18n-aria-label="progress.overall"></progress>
+          <dl class="counters">
+            <div class="counter"><dt data-i18n="count.done"></dt><dd id="count-done" data-testid="count-done">0</dd></div>
+            <div class="counter"><dt data-i18n="count.failed"></dt><dd id="count-failed" data-testid="count-failed">0</dd></div>
+            <div class="counter"><dt data-i18n="count.pending"></dt><dd id="count-pending" data-testid="count-pending">0</dd></div>
+            <div class="counter"><dt data-i18n="count.active"></dt><dd id="count-active" data-testid="count-active">0</dd></div>
+          </dl>
+        </div>
+
+        <div class="controls" role="group" data-i18n-aria-label="controls.aria">
+          <button type="button" class="btn btn-primary" id="btn-start" data-testid="btn-start" data-i18n="btn.start" disabled></button>
+          <button type="button" class="btn" id="btn-pause" data-testid="btn-pause" data-i18n="btn.pause" disabled></button>
+          <button type="button" class="btn" id="btn-resume" data-testid="btn-resume" data-i18n="btn.resume" disabled></button>
+          <button type="button" class="btn" id="btn-stop" data-testid="btn-stop" data-i18n="btn.stop" disabled></button>
+          <button type="button" class="btn" id="btn-retry-failed" data-testid="btn-retry-failed" data-i18n="btn.retryFailed" disabled></button>
+        </div>
+        <p class="muted" id="pause-hint" data-testid="pause-hint" role="status" hidden></p>
+
+        <div class="export-row">
+          <label class="sr-only" for="select-export-format" data-i18n="export.format"></label>
+          <select id="select-export-format" data-testid="select-export-format" class="select-sm">
+            <option value="json" data-i18n="export.json"></option>
+            <option value="csv" data-i18n="export.csv"></option>
+          </select>
+          <button type="button" class="btn btn-sm" id="btn-export-log" data-testid="btn-export-log" data-i18n="btn.exportLog"></button>
+        </div>
+
+        <div class="characters" id="character-list" data-testid="character-list"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-new">
+        <h2 id="h-new" data-i18n="new.title"></h2>
+
+        <fieldset class="modes">
+          <legend class="sr-only" data-i18n="mode.legend"></legend>
+          <label class="radio"><input type="radio" name="mode" value="single" id="mode-single" data-testid="mode-single" checked><span data-i18n="mode.single"></span></label>
+          <label class="radio"><input type="radio" name="mode" value="multi" id="mode-multi" data-testid="mode-multi"><span data-i18n="mode.multi"></span></label>
+          <label class="radio"><input type="radio" name="mode" value="import" id="mode-import" data-testid="mode-import"><span data-i18n="mode.import"></span></label>
+        </fieldset>
+
+        <div class="form" id="form-generate">
+          <div class="field" id="field-characters" hidden>
+            <label for="input-characters" data-i18n="field.characters"></label>
+            <input type="number" id="input-characters" data-testid="input-characters" min="2" max="50" step="1" value="5" inputmode="numeric" aria-describedby="err-characters">
+            <small class="field-error" id="err-characters"></small>
+          </div>
+
+          <div class="field">
+            <label for="input-frames" data-i18n="field.frames"></label>
+            <div class="inline">
+              <input type="number" id="input-frames" data-testid="input-frames" min="1" max="100" step="1" value="10" inputmode="numeric" aria-describedby="err-frames">
+              <div class="quick" role="group" data-i18n-aria-label="quick.frames">
+                <button type="button" class="chip-btn" data-frames="10">10</button>
+                <button type="button" class="chip-btn" data-frames="15">15</button>
+                <button type="button" class="chip-btn" data-frames="20">20</button>
+                <button type="button" class="chip-btn" data-frames="30">30</button>
+              </div>
+            </div>
+            <small class="field-error" id="err-frames"></small>
+          </div>
+
+          <div class="field">
+            <label for="select-preset" data-i18n="field.preset"></label>
+            <select id="select-preset" data-testid="select-preset">
+              <option value="" data-i18n="preset.current"></option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="select-strategy" data-i18n="field.strategy"></label>
+            <select id="select-strategy" data-testid="select-strategy">
+              <option value="character" data-i18n="strategy.character"></option>
+              <option value="series" data-i18n="strategy.series"></option>
+            </select>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="select-profile" data-i18n="field.profile"></label>
+              <select id="select-profile" data-testid="select-profile"></select>
+            </div>
+            <div class="field">
+              <label for="select-length" data-i18n="field.length"></label>
+              <select id="select-length" data-testid="select-length">
+                <option value="short" data-i18n="length.short"></option>
+                <option value="standard" data-i18n="length.standard" selected></option>
+                <option value="detailed" data-i18n="length.detailed"></option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="input-seed" data-i18n="field.seed"></label>
+            <input type="text" id="input-seed" data-testid="input-seed" maxlength="64" pattern="[A-Za-z0-9._~:\-]{1,64}" autocomplete="off" spellcheck="false" data-i18n-placeholder="seed.placeholder" aria-describedby="err-seed">
+            <small class="field-error" id="err-seed"></small>
+          </div>
+
+          <label class="check" id="field-site-character" hidden>
+            <input type="checkbox" id="check-site-character" data-testid="check-site-character">
+            <span data-i18n="field.siteCharacter"></span>
+          </label>
+
+          <p class="total" id="total-count" data-testid="total-count" data-level="ok"></p>
+          <p class="notice notice-warn" id="site-hint" data-testid="site-hint" hidden data-i18n="create.siteHint"></p>
+
+          <div class="actions">
+            <button type="button" class="btn btn-primary" id="btn-create-batch" data-testid="btn-create-batch" data-i18n="btn.create"></button>
+            <button type="button" class="btn" id="btn-test-job" data-testid="btn-test-job" data-i18n="btn.testJob"></button>
+          </div>
+          <div class="pending" id="create-pending" data-testid="create-pending" role="status" hidden>
+            <progress aria-hidden="true"></progress>
+            <span id="create-pending-text" data-i18n="create.pending"></span>
+          </div>
+        </div>
+
+        <div class="form" id="form-import" hidden>
+          <div class="field">
+            <label for="input-import-file" data-i18n="import.file"></label>
+            <input type="file" id="input-import-file" data-testid="input-import-file" accept=".json,.jsonl,.txt" aria-describedby="import-file-info">
+            <small class="hint" id="import-file-info" data-testid="import-file-info" data-i18n="import.none"></small>
+          </div>
+          <p class="hint" data-i18n="import.hint"></p>
+          <div class="actions">
+            <button type="button" class="btn" id="btn-import-test" data-testid="btn-import-test" data-i18n="btn.importTest"></button>
+          </div>
+        </div>
+
+        <p class="summary" id="batch-summary" data-testid="batch-summary" role="status"></p>
+      </section>
+
+      <section class="card" aria-labelledby="h-prev">
+        <h2 id="h-prev" data-i18n="prev.title"></h2>
+        <p class="muted" id="batch-list-empty" data-i18n="prev.empty"></p>
+        <ul class="batch-list" id="batch-list" data-testid="batch-list"></ul>
+      </section>
+    </section>
+
+    <!-- ───────── Настройки ───────── -->
+    <section role="tabpanel" id="panel-settings" data-tab="settings" aria-labelledby="tab-settings" hidden>
+      <form class="card" id="settings-form" novalidate>
+        <h2 data-i18n="settings.title"></h2>
+        <div id="settings-groups"></div>
+        <p class="notice notice-warn" id="settings-invalid" hidden data-i18n="settings.invalid"></p>
+        <div class="actions">
+          <button type="submit" class="btn btn-primary" id="btn-save-settings" data-testid="btn-save-settings" data-i18n="btn.save"></button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ───────── Журнал ───────── -->
+    <section role="tabpanel" id="panel-log" data-tab="log" aria-labelledby="tab-log" hidden>
+      <div class="card">
+        <h2 data-i18n="log.title"></h2>
+        <div class="log-tools">
+          <label for="log-filter" data-i18n="log.filter"></label>
+          <select id="log-filter" data-testid="log-filter" class="select-sm">
+            <option value="" data-i18n="log.level.all"></option>
+            <option value="info" data-i18n="log.level.info"></option>
+            <option value="warn" data-i18n="log.level.warn"></option>
+            <option value="error" data-i18n="log.level.error"></option>
+          </select>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn btn-sm" id="btn-log-json" data-testid="btn-log-json" data-i18n="btn.logJson"></button>
+          <button type="button" class="btn btn-sm" id="btn-log-csv" data-testid="btn-log-csv" data-i18n="btn.logCsv"></button>
+        </div>
+        <p class="muted" id="log-empty" data-testid="log-empty" hidden></p>
+        <ol class="log-list" id="log-list" data-testid="log-list"></ol>
+      </div>
+    </section>
+
+    <!-- ───────── О расширении ───────── -->
+    <section role="tabpanel" id="panel-about" data-tab="about" aria-labelledby="tab-about" hidden>
+      <div class="card prose" id="about-content" data-testid="about-content"></div>
+    </section>
+  </main>
+
+  <footer class="dock">
+    <div class="toast" id="toast" data-testid="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <button type="button" class="btn btn-danger btn-block" id="btn-emergency-stop" data-testid="btn-emergency-stop" data-i18n="btn.emergency" disabled></button>
+  </footer>
+</div>
+
+<dialog id="confirm-dialog" data-testid="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+  <form id="confirm-form" novalidate>
+    <h2 id="confirm-title"></h2>
+    <div class="dialog-body" id="confirm-body"></div>
+    <label class="check" id="confirm-check-row">
+      <input type="checkbox" id="confirm-check" data-testid="confirm-check">
+      <span id="confirm-check-label"></span>
+    </label>
+    <div class="field" id="confirm-total-row">
+      <label for="confirm-typed-total" id="confirm-total-label"></label>
+      <input type="text" id="confirm-typed-total" data-testid="confirm-typed-total" inputmode="numeric" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="confirm-cancel" data-testid="confirm-cancel" data-i18n="confirm.cancel"></button>
+      <button type="submit" class="btn btn-primary" id="confirm-ok" data-testid="confirm-ok" data-i18n="confirm.start.ok" disabled></button>
+    </div>
+  </form>
+</dialog>
+
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "short_name": "RPS → ChatGPT",
+  "description": "__MSG_extDescription__",
+  "version": "1.0.1",
+  "default_locale": "ru",
+  "minimum_chrome_version": "116",
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": {
+    "default_title": "__MSG_actionTitle__",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel/index.html" },
+  "permissions": ["storage", "unlimitedStorage", "downloads", "alarms", "sidePanel", "scripting", "notifications"],
+  "host_permissions": ["https://chatgpt.com/*", "https://*.oaiusercontent.com/*", "https://promts.vibecods.xyz/*"],
+  "content_scripts": [
+    { "matches": ["https://chatgpt.com/*"], "js": ["content/chatgpt.js"], "run_at": "document_idle" },
+    { "matches": ["https://promts.vibecods.xyz/*"], "js": ["content/site-bridge.js"], "run_at": "document_idle" }
+  ],
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
+}
