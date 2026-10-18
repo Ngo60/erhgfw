@@ -68,6 +68,7 @@ export const ERR = Object.freeze({
   CONTENT_POLICY: { kind: 'permanent', ru: 'ChatGPT отклонил запрос по правилам содержимого. Задание помечено ошибкой; правила не обходятся.' },
   MULTIPLE_IMAGES: { kind: 'permanent', ru: 'ChatGPT вернул несколько изображений вместо одного. Измените политику в настройках или выберите кадр вручную.' },
   UNSUPPORTED_IMAGE_FORMAT: { kind: 'permanent', ru: 'Формат файла не распознан как PNG/JPEG/WebP/GIF.' },
+  IMAGE_URL_UNSUPPORTED: { kind: 'permanent', ru: 'Адрес изображения не поддерживается расширением: допустимы blob: и data:image/ со страницы ChatGPT и https на chatgpt.com или *.oaiusercontent.com. Задание помечено ошибкой.' },
   INTEGRITY: { kind: 'permanent', ru: 'Нарушена целостность задания (промпт не соответствует персонажу).' },
   INTERNAL: { kind: 'permanent', ru: 'Внутренняя ошибка расширения.' },
 });

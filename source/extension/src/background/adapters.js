@@ -1,9 +1,11 @@
 // Адаптеры к chrome.*: вкладка ChatGPT, загрузка изображений, downloads, клиент моста сайта. Протестированы в e2e (реальный Chrome).
 import { LIMITS } from '../lib/constants.js';
 import { AdapterError } from '../lib/errors.js';
-import { isAllowedImageUrl, isChatGptUrl } from '../lib/validate.js';
+import { sha256Hex, sniffImage } from '../lib/image.js';
+import { classifyImageUrl, describeImageUrl, isChatGptUrl } from '../lib/validate.js';
 
 const CHAT_MATCH = 'https://chatgpt.com/*';
+const CHAT_ORIGIN = 'https://chatgpt.com';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function withTimeout(promise, ms, code, message) {
@@ -52,7 +54,7 @@ export function createChatPage() {
       throw mapTabError(e);
     }
     if (!res) throw new AdapterError('UI_CHANGED', 'Вкладка ChatGPT не вернула ответ.');
-    if (res.ok === false) throw new AdapterError(res.error?.code ?? 'INTERNAL', res.error?.message ?? 'Ошибка страницы ChatGPT');
+    if (res.ok === false) throw new AdapterError(res.error?.code ?? 'INTERNAL', res.error?.message ?? 'Ошибка страницы ChatGPT', Number.isInteger(res.error?.status) ? { status: res.error.status } : {});
     return res;
   }
 
@@ -100,6 +102,12 @@ export function createChatPage() {
     waitSlice: (tabId, a) => send(tabId, { type: 'CS_WAIT', key: a.key, baseline: a.baseline ?? null, usedKeys: a.usedKeys ?? [], minSide: a.minSide ?? 0, sliceMs: a.sliceMs ?? 20000 }, (a.sliceMs ?? 20000) + 20000),
     locate: (tabId, a) => send(tabId, { type: 'CS_LOCATE', key: a.key, minSide: a.minSide ?? 0, usedKeys: a.usedKeys ?? [] }),
     cancel: (tabId) => send(tabId, { type: 'CS_CANCEL' }, 8000),
+    /** blob:/data: изображение читает content script (адрес живёт только на странице): размер, формат, SHA-256 и своя стабильная копия для загрузки. */
+    async fetchImage(tabId, src) {
+      const r = await send(tabId, { type: 'CS_FETCH_IMAGE', src }, 60000);
+      return { size: r.size, info: r.info ?? null, sha256: r.sha256 ?? null, downloadUrl: r.downloadUrl ?? null, recoded: r.recoded === true };
+    },
+    releaseImage: (tabId, url) => send(tabId, { type: 'CS_RELEASE_IMAGE', url }, 8000),
     async diagnose(preferredId) {
       const tab = await findTab(preferredId ?? null);
       if (!tab) return { ok: false, items: [], notes: ['Вкладка https://chatgpt.com/ не найдена. Откройте ChatGPT в этом окне Chrome.'] };
@@ -133,26 +141,51 @@ export function createChatPage() {
 }
 
 // ───────── исходный файл изображения ─────────
-export function createImages() {
+/**
+ * fetch(src, {tabId}) → {size, info, sha256, downloadUrl?, recoded?, release()}. https (хосты ChatGPT/OpenAI) читает service worker,
+ * blob:/data: — content script вкладки tabId. downloadUrl — адрес для chrome.downloads (если нет, качается сам src).
+ */
+export function createImages(page = null) {
+  async function fromNetwork(url) {
+    let res;
+    try {
+      res = await fetch(url, { credentials: 'include', cache: 'no-store', redirect: 'follow' });
+    } catch (e) {
+      if (globalThis.navigator?.onLine === false) throw new AdapterError('NETWORK', 'Нет сети при получении изображения.');
+      throw new AdapterError('FETCH_FAILED', `Сеть: ${String(e?.message ?? e).slice(0, 120)}`);
+    }
+    if (res.status === 429) throw new AdapterError('RATE_LIMIT', 'Сервер ответил 429 (слишком много запросов).');
+    if (!res.ok) throw new AdapterError('FETCH_FAILED', `HTTP ${res.status}`, { status: res.status });
+    const type = res.headers.get('content-type') ?? '';
+    if (!type.toLowerCase().startsWith('image/')) throw new AdapterError('FETCH_FAILED', `Ожидалось изображение, получено «${type.slice(0, 60)}»`, { status: res.status });
+    const len = Number(res.headers.get('content-length') ?? 0);
+    if (len > LIMITS.maxImageBytes) throw new AdapterError('FETCH_FAILED', 'Файл слишком большой.');
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.length > LIMITS.maxImageBytes) throw new AdapterError('FETCH_FAILED', 'Файл слишком большой.');
+    const info = sniffImage(buf);
+    return { size: buf.length, info, sha256: info ? await sha256Hex(buf) : null, release: async () => {} };
+  }
+
   return {
-    async fetch(url) {
-      if (!isAllowedImageUrl(url)) throw new AdapterError('FETCH_FAILED', 'Адрес изображения не входит в список разрешённых (chatgpt.com, *.oaiusercontent.com).');
-      let res;
-      try {
-        res = await fetch(url, { credentials: 'include', cache: 'no-store', redirect: 'follow' });
-      } catch (e) {
-        if (globalThis.navigator?.onLine === false) throw new AdapterError('NETWORK', 'Нет сети при получении изображения.');
-        throw new AdapterError('FETCH_FAILED', `Сеть: ${String(e?.message ?? e).slice(0, 120)}`);
-      }
-      if (res.status === 429) throw new AdapterError('RATE_LIMIT', 'Сервер ответил 429 (слишком много запросов).');
-      if (!res.ok) throw new AdapterError('FETCH_FAILED', `HTTP ${res.status}`, { status: res.status });
-      const type = res.headers.get('content-type') ?? '';
-      if (!type.toLowerCase().startsWith('image/')) throw new AdapterError('FETCH_FAILED', `Ожидалось изображение, получено «${type.slice(0, 60)}»`, { status: res.status });
-      const len = Number(res.headers.get('content-length') ?? 0);
-      if (len > LIMITS.maxImageBytes) throw new AdapterError('FETCH_FAILED', 'Файл слишком большой.');
-      const buf = new Uint8Array(await res.arrayBuffer());
-      if (buf.length > LIMITS.maxImageBytes) throw new AdapterError('FETCH_FAILED', 'Файл слишком большой.');
-      return { bytes: buf, status: res.status, contentType: type };
+    async fetch(src, { tabId = null } = {}) {
+      const { kind } = classifyImageUrl(src, CHAT_ORIGIN);
+      if (kind === 'unsupported') throw new AdapterError('IMAGE_URL_UNSUPPORTED', `Адрес изображения не поддерживается расширением: ${describeImageUrl(src)}`);
+      if (kind === 'https') return fromNetwork(src);
+      if (!page || tabId === null) throw new AdapterError('TAB_NOT_FOUND', 'Для blob:/data: изображения нужна вкладка ChatGPT.');
+      const r = await page.fetchImage(tabId, src);
+      let released = !r.downloadUrl;
+      return {
+        size: r.size,
+        info: r.info,
+        sha256: r.sha256,
+        downloadUrl: r.downloadUrl ?? undefined,
+        recoded: r.recoded === true,
+        async release() {
+          if (released) return;
+          released = true;
+          await page.releaseImage(tabId, r.downloadUrl).catch(() => {});
+        },
+      };
     },
   };
 }

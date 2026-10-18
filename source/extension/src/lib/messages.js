@@ -47,6 +47,9 @@ export const CS_TYPES = Object.freeze({
   CS_LOCATE: { key: { t: 'str', max: 400 }, minSide: { t: 'int', min: 0, max: 4096, opt: true }, usedKeys: { t: 'arr', max: 8000, opt: true } },
   CS_CANCEL: {},
   CS_DIAGNOSE: {},
+  // Адрес изображения: blob:/data:image/ со страницы или https (дальнейшая проверка источника — в content script).
+  CS_FETCH_IMAGE: { src: { t: 'str', min: 8, max: 16 * 1024 * 1024, re: /^(?:blob:https:\/\/|data:image\/|https:\/\/)/i } },
+  CS_RELEASE_IMAGE: { url: { t: 'str', min: 20, max: 300, re: /^blob:https:\/\/[a-z0-9.-]+(?::\d+)?\/[0-9a-f-]{36}$/i } },
 });
 
 export const SITE_CALL_TYPES = Object.freeze(['hello', 'list-presets', 'create-batch', 'cancel']);
@@ -58,7 +61,7 @@ function check(spec, value) {
     case 'id':
       return typeof value === 'string' && ID_RE.test(value);
     case 'str':
-      return typeof value === 'string' && value.length <= (spec.max ?? 1000);
+      return typeof value === 'string' && value.length >= (spec.min ?? 0) && value.length <= (spec.max ?? 1000) && (!spec.re || spec.re.test(value));
     case 'bool':
       return typeof value === 'boolean';
     case 'int':
