@@ -12,6 +12,7 @@
     "build": "node scripts/build.mjs",
     "test": "node --test \"tests/unit/**/*.test.mjs\"",
     "test:e2e": "node scripts/build.mjs && node --test --test-timeout=900000 tests/e2e/e2e.test.mjs",
+    "test:live-site": "node --test --test-timeout=120000 tests/e2e/live-site.test.mjs",
     "verify": "npm run build && npm test"
   },
   "devDependencies": {
