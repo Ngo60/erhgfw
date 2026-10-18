@@ -5,9 +5,9 @@ import { crc32 } from 'node:zlib';
 import { Orchestrator } from '../../../source/extension/src/background/orchestrator.js';
 import { analyzeSnapshot, decideWait, findUserTurn } from '../../../source/extension/src/lib/chatgpt-classify.js';
 import { AdapterError } from '../../../source/extension/src/lib/errors.js';
-import { sha256Hex } from '../../../source/extension/src/lib/image.js';
+import { sha256Hex, sniffImage } from '../../../source/extension/src/lib/image.js';
 import { Store } from '../../../source/extension/src/lib/store.js';
-import { canonicalJson, parseBatch } from '../../../source/extension/src/lib/validate.js';
+import { canonicalJson, classifyImageUrl, describeImageUrl, parseBatch } from '../../../source/extension/src/lib/validate.js';
 
 export const START_URL = 'https://chatgpt.com/';
 export const flush = async (n = 6) => {
@@ -93,20 +93,55 @@ export function fakePng(width, height, seed = 0) {
 
 export class FakeImages {
   constructor() {
-    this.map = new Map();
-    this.failures = [];
-    this.calls = [];
+    this.map = new Map(); // адрес (исходный или наша blob:-копия) → байты
+    this.dead = new Set(); // адреса, которые больше не читаются (страница перезагружена, ссылка протухла)
+    this.failures = []; // {code?, message?, status?, before?} — по одной на вызов fetch
+    this.beforeFetch = []; // колбэки, выполняемые перед очередным fetch (имитация событий на странице)
+    this.recodeNext = 0; // сколько ближайших blob:-ответов пометить как перекодированные
+    this.calls = []; // исходные адреса
+    this.fetchCalls = []; // {src, tabId}
+    this.released = []; // адреса, освобождённые через release()
+    this.log = []; // порядок событий: fetch → download → release
+    this.copySeq = 0;
   }
   register(url, bytes) {
     this.map.set(url, bytes);
   }
-  async fetch(url) {
-    this.calls.push(url);
+  kill(url) {
+    this.dead.add(url);
+  }
+  /** Как createImages().fetch: https читает «service worker» (качается исходный адрес), blob:/data: — «content script» со своей копией. */
+  async fetch(src, { tabId = null } = {}) {
+    this.calls.push(src);
+    this.fetchCalls.push({ src, tabId });
+    this.beforeFetch.shift()?.();
     const f = this.failures.shift();
-    if (f) throw new AdapterError(f.code ?? 'FETCH_FAILED', f.message ?? 'fail', { status: f.status });
-    const bytes = this.map.get(url);
-    if (!bytes) throw new AdapterError('FETCH_FAILED', '404', { status: 404 });
-    return { bytes, status: 200, contentType: 'image/png' };
+    if (f) {
+      f.before?.();
+      throw new AdapterError(f.code ?? 'FETCH_FAILED', f.message ?? 'fail', f.status === undefined ? {} : { status: f.status });
+    }
+    const { kind } = classifyImageUrl(src, 'https://chatgpt.com');
+    if (kind === 'unsupported') throw new AdapterError('IMAGE_URL_UNSUPPORTED', `Адрес изображения не поддерживается расширением: ${describeImageUrl(src)}`);
+    const bytes = this.map.get(src);
+    if (!bytes || this.dead.has(src)) {
+      throw new AdapterError('FETCH_FAILED', kind === 'https' ? 'HTTP 404' : 'Не удалось прочитать изображение: Failed to fetch', kind === 'https' ? { status: 404 } : {});
+    }
+    const info = sniffImage(bytes);
+    const base = { size: bytes.length, info, sha256: info ? await sha256Hex(bytes) : null };
+    this.log.push({ ev: 'fetch', url: src });
+    if (kind === 'https') return { ...base, release: async () => void this.log.push({ ev: 'release', url: src }) };
+    const downloadUrl = `blob:https://chatgpt.com/00000000-0000-4000-8000-${String(++this.copySeq).padStart(12, '0')}`;
+    this.map.set(downloadUrl, bytes);
+    const recoded = this.recodeNext > 0 && (this.recodeNext -= 1, true);
+    return {
+      ...base,
+      downloadUrl,
+      recoded,
+      release: async () => {
+        this.released.push(downloadUrl);
+        this.log.push({ ev: 'release', url: downloadUrl });
+      },
+    };
   }
 }
 
@@ -124,6 +159,7 @@ export class FakeDownloads {
   async start({ url, filename, conflictAction }) {
     const id = ++this.seq;
     this.calls.push({ url: url.startsWith('data:') ? 'data:' : url, filename, conflictAction, at: this.clock.now() });
+    if (!url.startsWith('data:')) this.images.log.push({ ev: 'download', url });
     const f = this.failures.length && !url.startsWith('data:') ? this.failures.shift() : null;
     if (f === 'throw') throw new AdapterError('DOWNLOAD_FAILED', 'downloads.download отклонён');
     let size = 0;
@@ -188,6 +224,7 @@ export class FakePage {
     this.hideTurns = false;
     this.unverifiedAck = false;
     this.lastImage = null;
+    this.imageKind = 'estuary'; // 'estuary' | 'blob' | функция (n) => адрес
     this.cur = this.#newConv();
   }
   #newConv() {
@@ -212,6 +249,31 @@ export class FakePage {
     else this.cur = this.#newConv();
     this.pending = this.cur.pending ?? null;
   }
+  #imageRef(n) {
+    if (this.imageKind === 'blob') {
+      const uuid = `0a1b2c3d-0000-4000-8000-${String(n).padStart(12, '0')}`;
+      return { key: `blob:${uuid}`, src: `blob:https://chatgpt.com/${uuid}` };
+    }
+    if (typeof this.imageKind === 'function') {
+      const src = this.imageKind(n);
+      return { key: `u:${src.slice(0, 80)}`, src };
+    }
+    return { key: `estuary:file_${n}`, src: `https://chatgpt.com/backend-api/estuary/content?id=file_${n}&sig=s${n}` };
+  }
+  /** Как после перезагрузки страницы: те же изображения в беседах, но с новыми адресами; прежние адреса больше не читаются. */
+  refreshImages() {
+    for (const conv of new Set([...this.convs.values(), this.cur])) {
+      for (const turn of conv.turns) {
+        (turn.images ?? []).forEach((img, i) => {
+          const bytes = this.images.map.get(img.src);
+          this.images.kill(img.src);
+          const fresh = this.#imageRef(++this.imgSeq);
+          this.images.register(fresh.src, bytes);
+          turn.images[i] = { ...img, ...fresh };
+        });
+      }
+    }
+  }
   #materialize() {
     const p = this.pending;
     if (!p || this.clock.now() < p.readyAt || p.done) return;
@@ -219,9 +281,9 @@ export class FakePage {
     const mkImg = (reuse, sameBytes) => {
       if (reuse && this.lastImage) return this.lastImage;
       const n = ++this.imgSeq;
-      const src = `https://chatgpt.com/backend-api/estuary/content?id=file_${n}&sig=s${n}`;
+      const { key, src } = this.#imageRef(n);
       this.images.register(src, sameBytes && this.lastImage ? this.images.map.get(this.lastImage.src) : fakePng(size, size, n));
-      const img = { key: `estuary:file_${n}`, src, alt: 'Generated image: test', w: size, h: size, complete: true };
+      const img = { key, src, alt: 'Generated image: test', w: size, h: size, complete: true };
       this.lastImage = img;
       return img;
     };
