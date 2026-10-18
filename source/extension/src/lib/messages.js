@@ -36,15 +36,15 @@ export const PANEL_TYPES = Object.freeze({
 export const CS_TYPES = Object.freeze({
   CS_PING: {},
   CS_SNAPSHOT: {},
-  CS_SUBMIT: { jobId: T.id, text: { t: 'str', max: 20000 }, key: { t: 'str', max: 200 }, token: { t: 'str', max: 200 } },
+  CS_SUBMIT: { jobId: T.id, text: { t: 'str', max: 20000 }, key: { t: 'str', max: 400 }, token: { t: 'str', max: 200 } },
   CS_WAIT: {
-    key: { t: 'str', max: 200 },
+    key: { t: 'str', max: 400 },
     baseline: { t: 'obj', opt: true, nullable: true },
     usedKeys: { t: 'arr', max: 8000, opt: true },
     minSide: { t: 'int', min: 0, max: 4096, opt: true },
     sliceMs: { t: 'int', min: 500, max: 30000, opt: true },
   },
-  CS_LOCATE: { key: { t: 'str', max: 200 }, minSide: { t: 'int', min: 0, max: 4096, opt: true }, usedKeys: { t: 'arr', max: 8000, opt: true } },
+  CS_LOCATE: { key: { t: 'str', max: 400 }, minSide: { t: 'int', min: 0, max: 4096, opt: true }, usedKeys: { t: 'arr', max: 8000, opt: true } },
   CS_CANCEL: {},
   CS_DIAGNOSE: {},
 });

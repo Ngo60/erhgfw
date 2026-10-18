@@ -2,7 +2,8 @@
 //
 // Behaviours ({mode, delayMs, size, width, height, text, contentType, times} or just the mode name) are consumed one
 // per prompt from the queue set by setScript(); an empty queue falls back to the defaults (setDefaults()).
-// Modes: see MODES. Toggles (persist until reset()): loggedOut, captcha, uiChanged, offline.
+// Modes: see MODES. Toggles (persist until reset()): loggedOut, captcha, uiChanged, offline,
+// turnsStripped (turn/message attributes removed, text and images stay), turnsHidden (turn sections rendered empty).
 // Out-of-process control: POST /__ctl {script?, defaults?, reset?, loggedOut?, captcha?, uiChanged?, offline?}, GET /__state.
 import https from 'node:https';
 import crypto from 'node:crypto';
@@ -26,7 +27,7 @@ export const MODES = [
   'drop-send',
 ];
 const IMAGE_MODES = new Set(['normal', 'two-images', 'hang', 'small-image', 'same-image', 'jpeg', 'webp', 'slow']);
-const TOGGLES = ['loggedOut', 'captcha', 'uiChanged', 'offline'];
+const TOGGLES = ['loggedOut', 'captcha', 'uiChanged', 'offline', 'turnsStripped', 'turnsHidden'];
 
 const TEXTS = {
   'text-only': 'Sure! Here is a description\u2026',
@@ -85,7 +86,7 @@ export async function startMockChatGpt({ port = 0, certs, log = false, defaults:
     sends: [],
     script: [],
     defaults: { ...baseDefaults },
-    toggles: { loggedOut: false, captcha: false, uiChanged: false, offline: false },
+    toggles: { loggedOut: false, captcha: false, uiChanged: false, offline: false, turnsStripped: false, turnsHidden: false },
     lastImages: null,
     seq: 0,
     ts: 0,
@@ -123,6 +124,8 @@ export async function startMockChatGpt({ port = 0, certs, log = false, defaults:
     loggedOut: st.toggles.loggedOut,
     captcha: st.toggles.captcha,
     uiChanged: st.toggles.uiChanged,
+    turnsStripped: st.toggles.turnsStripped,
+    turnsHidden: st.toggles.turnsHidden,
   });
 
   function pushUser(conv, text) {

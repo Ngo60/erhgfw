@@ -346,11 +346,12 @@ progress:indeterminate::-webkit-progress-bar { background: transparent; }
 .diag-list { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 3px; }
 .diag-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
 .diag-mark { width: 1.3em; font-weight: 800; text-align: center; }
-.diag-item[data-found="true"] .diag-mark { color: var(--ok-fg); }
-.diag-item[data-found="false"] .diag-mark { color: var(--err-fg); }
+.diag-item[data-state="ok"] .diag-mark { color: var(--ok-fg); }
+.diag-item[data-state="bad"] .diag-mark { color: var(--err-fg); }
+.diag-item[data-state="info"] .diag-mark, .diag-item[data-state="unknown"] .diag-mark { color: var(--muted); }
 @media (prefers-color-scheme: light) {
-  .diag-item[data-found="true"] .diag-mark { color: var(--f-done); }
-  .diag-item[data-found="false"] .diag-mark { color: var(--danger); }
+  .diag-item[data-state="ok"] .diag-mark { color: var(--f-done); }
+  .diag-item[data-state="bad"] .diag-mark { color: var(--danger); }
 }
 .diag-name { font-weight: 600; }
 .diag-state::before { content: "— "; }

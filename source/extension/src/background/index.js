@@ -3,6 +3,7 @@
 import { ACTIVE_STATES } from '../lib/constants.js';
 import { AdapterError, CommandError } from '../lib/errors.js';
 import { cleanCreateParams, validatePanelMessage } from '../lib/messages.js';
+import { siteFailure } from '../lib/site-status.js';
 import { Store } from '../lib/store.js';
 import { parseBatch, parseImport } from '../lib/validate.js';
 import { createChatPage, createDownloads, createImages, createSiteClient } from './adapters.js';
@@ -42,12 +43,25 @@ async function wake() {
 }
 
 // ───────── состояние для панели ─────────
-let lastSite = { connected: false };
+let lastSite = { connected: false, checking: true };
+let siteCheckedAt = 0;
+let siteInflight = null;
 const ports = new Set();
 let pushTimer = null;
 
+/** Проверка моста сайта без дублирования одновременных запросов. */
+function checkSite() {
+  siteInflight ??= siteStatus().finally(() => {
+    siteCheckedAt = Date.now();
+    siteInflight = null;
+  });
+  return siteInflight;
+}
+
 async function view() {
   await boot;
+  // Статус хранится в памяти worker'а и сбрасывается при его выгрузке — обновляем сами, без кнопки «Обновить».
+  if (!siteInflight && Date.now() - siteCheckedAt > (lastSite.connected ? 30000 : 3000)) void checkSite();
   const chatgpt = await chatPage.status(store.runner.chat?.tabId ?? null).catch(() => ({ tabFound: false }));
   return orch.getView({ site: lastSite, chatgpt });
 }
@@ -98,11 +112,14 @@ const viewResp = async () => ({ view: await view() });
 async function siteStatus() {
   try {
     const { tab, res } = await site.call('hello');
-    if (!res?.ok) throw new AdapterError(res?.error?.code ?? 'SITE_ERROR', res?.error?.message ?? 'Мост сайта не отвечает. Сайт нужно обновить (см. docs/04-SERVER-SETUP.md).');
-    const p = res.payload ?? {};
-    lastSite = { connected: true, tabId: tab.id, origin: SITE_ORIGIN, engine: String(p.engine ?? ''), bridge_version: p.bridge_version ?? null, limits: p.limits ?? null, site_character: p.site_character === true, profiles: Array.isArray(p.profiles) ? p.profiles : null, lengths: Array.isArray(p.lengths) ? p.lengths : null };
+    if (!res?.ok) {
+      lastSite = { ...siteFailure({ code: res?.error?.code, message: res?.error?.message }), tabId: tab.id };
+    } else {
+      const p = res.payload ?? {};
+      lastSite = { connected: true, tabFound: true, tabId: tab.id, origin: SITE_ORIGIN, engine: String(p.engine ?? ''), bridge_version: p.bridge_version ?? null, limits: p.limits ?? null, site_character: p.site_character === true, profiles: Array.isArray(p.profiles) ? p.profiles : null, lengths: Array.isArray(p.lengths) ? p.lengths : null };
+    }
   } catch (e) {
-    lastSite = { connected: false, reason: toError(e).message };
+    lastSite = siteFailure(toError(e));
   }
   schedulePush();
   return lastSite;
@@ -115,7 +132,7 @@ async function addParsed(parsed, test) {
 
 const handlers = {
   GET_VIEW: viewResp,
-  SITE_STATUS: async () => ({ site: await siteStatus() }),
+  SITE_STATUS: async () => ({ site: await checkSite() }),
   SITE_LIST_PRESETS: async () => {
     const { res } = await site.call('list-presets');
     if (!res?.ok) throw new CommandError(res?.error?.code ?? 'SITE_ERROR', res?.error?.message ?? 'Не удалось получить пресеты.');
@@ -210,11 +227,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  if (tabId === lastSite.tabId && lastSite.connected) {
+    lastSite = siteFailure({ code: 'NO_TAB' });
+    siteCheckedAt = 0;
+  }
   await wake();
   orch.onTabRemoved(tabId);
   schedulePush();
 });
-chrome.tabs.onUpdated.addListener((_id, info) => {
+chrome.tabs.onUpdated.addListener((_id, info, tab) => {
+  if (info.status === 'complete' && String(tab?.url ?? '').startsWith(`${SITE_ORIGIN}/`)) siteCheckedAt = 0;
   if (info.status === 'complete' || info.url) schedulePush();
 });
 chrome.tabs.onActivated.addListener(() => schedulePush());

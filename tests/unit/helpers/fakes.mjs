@@ -185,6 +185,8 @@ export class FakePage {
     this.pending = null;
     this.watch = {};
     this.tokens = new Map();
+    this.hideTurns = false;
+    this.unverifiedAck = false;
     this.lastImage = null;
     this.cur = this.#newConv();
   }
@@ -243,15 +245,15 @@ export class FakePage {
   }
   snapshot() {
     this.#materialize();
-    const turns = this.cur.turns.map((t, i) => ({ i, role: t.role, text: t.text, images: t.images }));
-    if (this.generating) turns.push({ i: turns.length, role: 'assistant', text: 'Creating image', images: [] });
+    const turns = this.hideTurns ? [] : this.cur.turns.map((t, i) => ({ i, role: t.role, text: t.text, images: t.images }));
+    if (this.generating && !this.hideTurns) turns.push({ i: turns.length, role: 'assistant', text: 'Creating image', images: [] });
     const ui = !this.uiChanged;
     return {
       t: this.clock.now(),
       url: this.cur.url,
       online: this.online,
       hasComposer: ui && this.loggedIn,
-      hasSend: ui && this.loggedIn && !this.generating,
+      hasSend: false, // как в настоящем ChatGPT: в пустом поле ввода кнопки отправки нет
       hasStop: ui && this.generating,
       loginUi: !this.loggedIn,
       captchaUi: this.captcha,
@@ -285,7 +287,7 @@ export class FakePage {
       this.convs.set(this.cur.url, this.cur);
     }
     this.sent.push({ text, key, mode: beh.mode, at: this.clock.now(), conv: this.cur.id });
-    const ack = { accepted: true, baseline, url: this.cur.url, userTurnIndex: userIdx };
+    const ack = { accepted: true, ...(this.unverifiedAck ? { unverified: true } : {}), baseline, url: this.cur.url, userTurnIndex: userIdx };
     if (token) this.tokens.set(token, ack);
     return ack;
   }

@@ -45,7 +45,7 @@ async function clean() {
   const v = await view();
   if (v.runner.state !== 'idle' && v.runner.state !== 'completed') await send({ type: 'STOP' });
   E.chat.reset();
-  E.chat.setToggles({ loggedOut: false, captcha: false, uiChanged: false, offline: false });
+  E.chat.setToggles({ loggedOut: false, captcha: false, uiChanged: false, offline: false, turnsStripped: false, turnsHidden: false });
   E.chat.setScript([]);
   await must({ type: 'UPDATE_SETTINGS', patch: { newChatPerCharacter: true, multiImagePolicy: 'fail', intervalSec: 2, rotateChatEvery: 12 } });
   await reloadChat();
@@ -231,6 +231,42 @@ test('закрытие панели не останавливает очеред
   const v = await waitView(done, 'партия завершена без открытой панели', 150000);
   assert.equal(sends().length - n0, 3);
   assert.equal(imgs(v.batch.folder).length, 3);
+});
+
+test('панель сама находит сайт — без кнопки «Обновить», в том числе после выгрузки service worker', async () => {
+  await clean();
+  assert.ok((await killServiceWorker(DEBUG_PORT, E.extId)) >= 1);
+  const v = await waitView((x) => x.site.connected === true, 'автоматическое подключение к сайту', 60000);
+  assert.equal(v.site.bridge_version, 1);
+});
+
+test('атрибуты ходов в ChatGPT не распознаются (как на скриншоте: «ходов в беседе: 0») → поиск по тексту, партия проходит без дублей', async () => {
+  await clean();
+  E.chat.setToggles({ turnsStripped: true });
+  await reloadChat();
+  const d = await must({ type: 'DIAGNOSE_CHATGPT' });
+  assert.equal(d.report.items.find((i) => i.name === 'turn').found, false, 'обычные селекторы ходов ничего не находят');
+  const n0 = sends().length;
+  await runBatch({ frames_per_character: 2 });
+  const v = await waitView(done, 'партия при убранных атрибутах ходов', 150000);
+  assert.deepEqual(v.batch.characters[0].jobs.map((j) => j.status), ['completed', 'completed']);
+  assert.equal(sends().length - n0, 2, 'каждый промпт отправлен ровно один раз');
+  assert.equal(imgs(v.batch.folder).length, 2);
+});
+
+test('сообщений нет в беседе вовсе → остановка без повторной отправки; повтор — только по «Повторить ошибки»', async () => {
+  await clean();
+  E.chat.setToggles({ turnsHidden: true });
+  await reloadChat();
+  const n0 = sends().length;
+  await runBatch({ frames_per_character: 1 });
+  let v = await waitView((x) => x.runner.state === 'blocked', 'блокировка: сообщение не видно', 120000);
+  assert.equal(v.runner.block.code, 'SENT_NOT_VISIBLE');
+  assert.equal(sends().length - n0, 1);
+  await must({ type: 'RESUME' });
+  v = await waitView((x) => x.runner.state === 'blocked' && x.batch?.characters[0].jobs[0].status === 'failed', 'второй раз — ошибка задания', 120000);
+  assert.equal(v.batch.characters[0].jobs[0].error_code, 'SENT_NOT_VISIBLE');
+  assert.equal(sends().length - n0, 1, 'ни одной повторной отправки');
 });
 
 test('перезапуск Chrome (тот же профиль): состояние сохранено; после «Продолжить» без дублей', async () => {

@@ -11,7 +11,10 @@
     "site.unknown": "Сайт: проверяю…",
     "site.connected": "Сайт: подключён (движок {engine})",
     "site.connectedNoEngine": "Сайт: подключён",
-    "site.missing": "Сайт: не найден — откройте promts.vibecods.xyz",
+    "site.missing": "Сайт: вкладка не открыта — откройте promts.vibecods.xyz",
+    "site.noBridge": "Сайт открыт, но мост не отвечает — обновите вкладку (Ctrl+F5) или используйте импорт файла",
+    "site.bridgeVersion": "Сайт открыт, но версия моста не совпадает с расширением",
+    "site.error": "Сайт открыт, но связь с ним не установлена",
     "chatgpt.unknown": "ChatGPT: проверяю…",
     "chatgpt.ready": "ChatGPT: вкладка готова",
     "chatgpt.notReady": "ChatGPT: вкладка найдена, страница не готова",
@@ -24,10 +27,15 @@
     "tab.about": "О расширении",
     // Диагностика интерфейса ChatGPT
     "diag.pending": "Проверяю интерфейс ChatGPT…",
-    "diag.ok": "Интерфейс ChatGPT распознан: все элементы найдены",
-    "diag.fail": "Интерфейс ChatGPT распознан не полностью",
-    "diag.found": "есть",
-    "diag.missing": "нет",
+    "diag.ok": "Интерфейс ChatGPT распознан",
+    "diag.fail": "Интерфейс ChatGPT распознан не полностью — см. ниже",
+    "diag.partial": "Интерфейс ChatGPT проверен не весь — см. ниже",
+    "diag.found": "найдено",
+    "diag.missing": "не найдено",
+    "diag.info": "нет (это нормально)",
+    "diag.unknown": "не проверено",
+    "diag.alarmOk": "не обнаружено",
+    "diag.alarmBad": "ОБНАРУЖЕНО",
     "diag.count": "элементов: {count}",
     "diag.notes": "Заметки",
     "diag.empty": "Отчёт пуст",
@@ -171,6 +179,7 @@
     "create.pending": "Формирую очередь на сайте… это может занять до 10 секунд",
     "create.progress": "Формирую очередь на сайте: {done} из {total}",
     "create.siteHint": "Сайт не подключён: откройте promts.vibecods.xyz, затем нажмите «Обновить».",
+    "create.siteHintNoBridge": "Вкладка сайта открыта, но мост не отвечает. Можно работать через «Ручная/импортированная очередь» — загрузите файл экспорта с сайта.",
     "summary.line": "Партия {id}: {characters} × {frames} = {total}. Папка: {folder}",
     "summary.existed": "Такая партия уже есть в очереди",
     "import.file": "Файл очереди (.json, .jsonl, .txt)",
@@ -664,13 +673,28 @@
   }
   function renderHeader(view) {
     const { site, chatgpt } = view;
-    if (site.connected) {
+    if (site.checking && !site.connected) setChip(byId("site-status"), "warn", "checking", t("site.unknown"));
+    else if (site.connected) {
       setChip(byId("site-status"), "ok", "connected", site.engine ? t("site.connected", { engine: site.engine }) : t("site.connectedNoEngine"));
-    } else setChip(byId("site-status"), "warn", "missing", t("site.missing"));
+    } else if (site.code === "NO_BRIDGE") setChip(byId("site-status"), "warn", "no-bridge", t("site.noBridge"));
+    else if (site.code === "BRIDGE_VERSION") setChip(byId("site-status"), "warn", "bridge-version", t("site.bridgeVersion"));
+    else if (site.tabFound) setChip(byId("site-status"), "warn", "error", t("site.error"));
+    else setChip(byId("site-status"), "warn", "missing", t("site.missing"));
     byId("site-status").title = site.connected || !site.reason ? "" : String(site.reason);
     if (chatgpt.tabFound && chatgpt.ready !== false) setChip(byId("chatgpt-status"), "ok", "ready", t("chatgpt.ready"));
     else if (chatgpt.tabFound) setChip(byId("chatgpt-status"), "warn", "not-ready", t("chatgpt.notReady"));
     else setChip(byId("chatgpt-status"), "warn", "missing", t("chatgpt.missing"));
+  }
+  var DIAG_MARK = { ok: "✓", bad: "✕", info: "–", unknown: "?" };
+  function diagItemState(item) {
+    if (typeof item.state === "string" && item.state in DIAG_MARK) return item.state;
+    return item.found === true ? "ok" : "bad";
+  }
+  function diagStateText(item, state) {
+    if (item.role === "alarm") return item.found === true ? t("diag.alarmBad") : t("diag.alarmOk");
+    if (state === "unknown") return t("diag.unknown");
+    if (state === "info") return t("diag.info");
+    return item.found === true ? t("diag.found") : t("diag.missing");
   }
   function renderDiagnose(report) {
     const box = byId("diagnose-report");
@@ -681,18 +705,21 @@
     }
     const items = Array.isArray(report.items) ? report.items.filter(isObj) : [];
     const notes = Array.isArray(report.notes) ? report.notes.map(String) : [];
+    const states = items.map(diagItemState);
     const ok = report.ok === true;
+    const headText = ok ? t("diag.ok") : states.includes("bad") ? t("diag.fail") : t("diag.partial");
     const close = el("button", { type: "button", class: "btn btn-sm", text: t("diag.close") });
     close.addEventListener("click", () => renderDiagnose(null));
     fill(
       box,
-      el("div", { class: "diag-head" }, [el("span", { text: ok ? t("diag.ok") : t("diag.fail") }), close]),
-      items.length ? el("ul", { class: "diag-list" }, items.map((item) => el("li", { class: "diag-item", dataset: { found: String(item.found === true) } }, spaced(
-        el("span", { class: "diag-mark", "aria-hidden": "true", text: item.found === true ? "✓" : "✕" }),
-        el("span", { class: "diag-name", text: String(item.name ?? "") }),
-        el("span", { class: "diag-state", text: item.found === true ? t("diag.found") : t("diag.missing") }),
-        item.count !== void 0 && item.count !== null ? el("span", { class: "muted", text: `(${t("diag.count", { count: item.count })})` }) : null,
-        item.selector ? el("code", { text: String(item.selector) }) : null
+      el("div", { class: "diag-head" }, [el("span", { text: headText }), close]),
+      items.length ? el("ul", { class: "diag-list" }, items.map((item, i) => el("li", { class: "diag-item", dataset: { found: String(item.found === true), state: states[i] } }, spaced(
+        el("span", { class: "diag-mark", "aria-hidden": "true", text: DIAG_MARK[states[i]] }),
+        el("span", { class: "diag-name", text: String(item.label ?? item.name ?? "") }),
+        el("span", { class: "diag-state", text: diagStateText(item, states[i]) }),
+        item.count !== void 0 && item.count !== null && item.role !== "alarm" ? el("span", { class: "muted", text: `(${t("diag.count", { count: item.count })})` }) : null,
+        item.selector ? el("code", { text: String(item.selector) }) : null,
+        item.note ? el("span", { class: "muted", text: String(item.note) }) : null
       )))) : el("p", { class: "muted", text: t("diag.empty") }),
       notes.length ? el("p", { class: "muted", text: t("diag.notes") }) : null,
       notes.length ? el("ul", { class: "diag-notes" }, notes.map((n) => el("li", { text: n }))) : null
@@ -1017,7 +1044,8 @@
     setDisabled("btn-import-test", ui.creating);
     const { site } = ui.view;
     byId("site-hint").hidden = f.mode === "import" || !!site.connected;
-    setText(byId("site-hint"), site.reason ? `${t("create.siteHint")} ${site.reason}` : t("create.siteHint"));
+    const hintBase = site.code === "NO_BRIDGE" ? t("create.siteHintNoBridge") : t("create.siteHint");
+    setText(byId("site-hint"), site.reason && site.code !== "NO_BRIDGE" ? `${hintBase} ${site.reason}` : hintBase);
     document.querySelectorAll(".chip-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.frames === byId("input-frames").value.trim())));
   }
   function fillSelect(select, options, fallback) {

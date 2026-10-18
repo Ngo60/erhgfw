@@ -480,7 +480,14 @@ export class Orchestrator {
     const tabId = r0.chat.tabId;
     try {
       if (job.submitted || job.attempts > 1) {
-        const loc = await this.d.page.locate(tabId, { key, minSide: s.minImageSide, usedKeys: this.#usedKeys(batch.batch_id) });
+        const find = () => this.d.page.locate(tabId, { key, minSide: s.minImageSide, usedKeys: this.#usedKeys(batch.batch_id) });
+        let loc = await find();
+        // После перехода в беседу сообщения рисуются не сразу: промпт, который точно отправлялся, ищем до 12 с.
+        for (let i = 0; i < 8 && !loc.found && job.submitted; i++) {
+          await this.d.sleep(1500);
+          if (this.#stale(r0)) return true;
+          loc = await find();
+        }
         if (this.#stale(r0)) return true;
         if (loc.found && loc.images?.length) {
           await this.#go('downloading', { job, jobStatus: 'downloading', jobPatch: { candidates: loc.images, downloads: null, resume_from: 'downloading' }, events: [ev('info', 'REATTACH', 'Изображение найдено в беседе — повторная отправка не нужна')] });
@@ -496,6 +503,7 @@ export class Orchestrator {
           });
           return true;
         }
+        if (!loc.found && job.submitted) throw new AdapterError('SENT_NOT_VISIBLE', 'Промпт уже отправлялся, но в беседе его не видно.');
       }
       const token = `${job.image_job_id}#${job.submit_seq ?? 0}`;
       const res = await this.d.page.submit(tabId, { jobId: job.image_job_id, text, key, token });
@@ -504,9 +512,9 @@ export class Orchestrator {
       await this.#go('waiting', {
         job,
         jobStatus: 'waiting',
-        jobPatch: { submitted: { at: iso(this.now()), token, baseline: res.baseline ?? null, chat_url: res.url ?? null, user_turn_index: res.userTurnIndex ?? null }, error: null },
+        jobPatch: { submitted: { at: iso(this.now()), token, baseline: res.baseline ?? null, chat_url: res.url ?? null, user_turn_index: res.userTurnIndex ?? null, unverified: res.unverified === true }, error: null },
         runnerPatch: { last_progress_at: this.now(), progress_sig: null, chat: { ...r0.chat, url: res.url ?? r0.chat.url } },
-        events: [ev('info', 'SUBMITTED', 'Промпт отправлен в ChatGPT')],
+        events: [res.unverified ? ev('warn', 'SUBMITTED_UNVERIFIED', 'Промпт, по-видимому, отправлен, но расширение не видит его в беседе — жду подтверждения; повторно отправлять не буду.') : ev('info', 'SUBMITTED', 'Промпт отправлен в ChatGPT')],
       });
       return true;
     } catch (e) {
@@ -566,7 +574,8 @@ export class Orchestrator {
         return true;
       }
       case 'blocked':
-        await this.#block(res.code, res.message, { job, keepSubmitted: res.code !== 'RATE_LIMIT' });
+        if (res.code === 'SENT_NOT_VISIBLE') await this.#handleError({ code: res.code, message: res.message }, { job });
+        else await this.#block(res.code, res.message, { job, keepSubmitted: res.code !== 'RATE_LIMIT' });
         return true;
       case 'error':
         await this.#handleError({ code: res.code, message: res.message }, { job });
@@ -763,6 +772,13 @@ export class Orchestrator {
     const info = errInfo(code);
     const detail = err?.message && err.message !== code ? err.message : info.ru;
     const cur = job ?? (this.store.runner.job_id ? this.store.getJob(this.store.runner.job_id) : null);
+    if (code === 'SENT_NOT_VISIBLE' && cur) {
+      // Первый раз — остановка с сохранением метки отправки («Продолжить» заново ищет промпт в беседе); второй — задание помечается
+      // ошибочным, а повтор возможен только явным «Повторить ошибки»: автоматических дубликатов быть не должно.
+      const seen = (cur.not_visible ?? 0) + 1;
+      if (seen >= 2) return this.#failAndBlock(code, detail, cur);
+      return this.#block(code, detail, { job: cur, keepSubmitted: true, jobExtra: { not_visible: seen } });
+    }
     switch (info.kind) {
       case 'blocking':
         return this.#block(code, detail, { job: cur, keepSubmitted });
@@ -775,18 +791,35 @@ export class Orchestrator {
     }
   }
 
-  async #block(code, detail, { job = null, keepSubmitted = true } = {}) {
+  async #block(code, detail, { job = null, keepSubmitted = true, jobExtra = {} } = {}) {
     const info = errInfo(code);
     const message = detail && detail !== info.ru ? `${info.ru} (${detail})` : info.ru;
     const cur = job ?? (this.store.runner.job_id ? this.store.getJob(this.store.runner.job_id) : null);
     await this.#go('blocked', {
       job: cur,
       jobStatus: cur && IN_FLIGHT.has(cur.status) ? 'pending' : cur?.status,
-      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...(keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1) }) } : {},
+      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...(keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1) }), ...jobExtra } : {},
       runnerPatch: { block: { code, message, at: iso(this.now()) }, pause_requested: false, job_id: cur?.image_job_id ?? this.store.runner.job_id },
       events: [ev('error', code, message)],
     });
     this.#notify('blocked', 'Очередь остановлена', message);
+    return true;
+  }
+
+  /** Промпт мог уйти, но найти его не удаётся: задание — ошибочное (повтор только по «Повторить ошибки»), очередь остановлена. */
+  async #failAndBlock(code, detail, job) {
+    const info = errInfo(code);
+    const t = this.now();
+    const message = detail && detail !== info.ru ? `${info.ru} (${detail})` : info.ru;
+    await this.#go('blocked', {
+      job,
+      jobStatus: 'failed',
+      jobPatch: { error: { code, message: info.ru }, completed_at: iso(t), submitted: null, candidates: null, downloads: null, resume_from: null, not_visible: 0 },
+      runnerPatch: { block: { code, message, at: iso(t) }, pause_requested: false, job_id: job.image_job_id },
+      events: [ev('error', code, `Задание помечено ошибочным: ${message}`)],
+    });
+    this.#notify('blocked', 'Очередь остановлена', message);
+    await this.#writeMetadata(job.batch_id, job.character_id, { manifest: this.#manifestDue(job.batch_id, job.character_id) }).catch(() => {});
     return true;
   }
 

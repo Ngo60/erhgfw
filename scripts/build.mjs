@@ -24,15 +24,23 @@ function* walk(dir, skip = () => false) {
 }
 const posix = (p, base) => relative(base, p).split(sep).join('/');
 
+async function bundle(options) {
+  const result = await build(options);
+  if (result.warnings.length) {
+    console.error(`СБОРКА ОТКЛОНЕНА: предупреждения esbuild (${result.warnings.length}) в ${options.entryPoints[0]}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(OUT, { recursive: true });
 
   const common = { bundle: true, target: 'chrome116', legalComments: 'none', charset: 'utf8', logLevel: 'warning', sourcemap: false, minify: false };
-  await build({ ...common, entryPoints: [join(SRC, 'src/background/index.js')], outfile: join(OUT, 'background.js'), format: 'esm' });
-  await build({ ...common, entryPoints: [join(SRC, 'src/content/chatgpt.js')], outfile: join(OUT, 'content/chatgpt.js'), format: 'iife' });
-  await build({ ...common, entryPoints: [join(SRC, 'src/content/site-bridge.js')], outfile: join(OUT, 'content/site-bridge.js'), format: 'iife' });
-  await build({ ...common, entryPoints: [join(SRC, 'src/sidepanel/panel.js')], outfile: join(OUT, 'sidepanel/panel.js'), format: 'iife' });
+  await bundle({ ...common, entryPoints: [join(SRC, 'src/background/index.js')], outfile: join(OUT, 'background.js'), format: 'esm' });
+  await bundle({ ...common, entryPoints: [join(SRC, 'src/content/chatgpt.js')], outfile: join(OUT, 'content/chatgpt.js'), format: 'iife' });
+  await bundle({ ...common, entryPoints: [join(SRC, 'src/content/site-bridge.js')], outfile: join(OUT, 'content/site-bridge.js'), format: 'iife' });
+  await bundle({ ...common, entryPoints: [join(SRC, 'src/sidepanel/panel.js')], outfile: join(OUT, 'sidepanel/panel.js'), format: 'iife' });
   cpSync(join(SRC, 'src/sidepanel/index.html'), join(OUT, 'sidepanel/index.html'));
   cpSync(join(SRC, 'src/sidepanel/styles.css'), join(OUT, 'sidepanel/styles.css'));
   cpSync(join(SRC, 'icons'), join(OUT, 'icons'), { recursive: true });

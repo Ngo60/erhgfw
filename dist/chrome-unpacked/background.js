@@ -56,6 +56,7 @@ var ERR = Object.freeze({
   SIZE_MISMATCH: { kind: "retry", ru: "Размер сохранённого файла не совпал с проверенным." },
   PREVIEW_ONLY: { kind: "retry", ru: "Найдено только превью (изображение меньше допустимого минимума)." },
   DUPLICATE_IMAGE: { kind: "retry", ru: "Получено изображение, которое уже сохранено для другого задания." },
+  SENT_NOT_VISIBLE: { kind: "blocking", ru: "Промпт отправлен (или мог быть отправлен), но расширение не видит его в беседе — вероятно, изменилась разметка ChatGPT или беседа была переключена. Повторно отправлять его автоматически нельзя. Проверьте беседу вручную: если изображение уже создано, сохраните его. «Проверить интерфейс ChatGPT» покажет, что именно не распознано." },
   CONTENT_POLICY: { kind: "permanent", ru: "ChatGPT отклонил запрос по правилам содержимого. Задание помечено ошибкой; правила не обходятся." },
   MULTIPLE_IMAGES: { kind: "permanent", ru: "ChatGPT вернул несколько изображений вместо одного. Измените политику в настройках или выберите кадр вручную." },
   UNSUPPORTED_IMAGE_FORMAT: { kind: "permanent", ru: "Формат файла не распознан как PNG/JPEG/WebP/GIF." },
@@ -157,15 +158,15 @@ var PANEL_TYPES = Object.freeze({
 var CS_TYPES = Object.freeze({
   CS_PING: {},
   CS_SNAPSHOT: {},
-  CS_SUBMIT: { jobId: T.id, text: { t: "str", max: 2e4 }, key: { t: "str", max: 200 }, token: { t: "str", max: 200 } },
+  CS_SUBMIT: { jobId: T.id, text: { t: "str", max: 2e4 }, key: { t: "str", max: 400 }, token: { t: "str", max: 200 } },
   CS_WAIT: {
-    key: { t: "str", max: 200 },
+    key: { t: "str", max: 400 },
     baseline: { t: "obj", opt: true, nullable: true },
     usedKeys: { t: "arr", max: 8e3, opt: true },
     minSide: { t: "int", min: 0, max: 4096, opt: true },
     sliceMs: { t: "int", min: 500, max: 3e4, opt: true }
   },
-  CS_LOCATE: { key: { t: "str", max: 200 }, minSide: { t: "int", min: 0, max: 4096, opt: true }, usedKeys: { t: "arr", max: 8e3, opt: true } },
+  CS_LOCATE: { key: { t: "str", max: 400 }, minSide: { t: "int", min: 0, max: 4096, opt: true }, usedKeys: { t: "arr", max: 8e3, opt: true } },
   CS_CANCEL: {},
   CS_DIAGNOSE: {}
 });
@@ -212,6 +213,18 @@ function cleanCreateParams(p) {
   if (!Number.isInteger(characters) || !Number.isInteger(p.frames_per_character)) return null;
   if (typeof p.profile !== "string" || typeof p.length !== "string") return null;
   return { mode, characters, frames_per_character: p.frames_per_character, strategy, preset_id: preset, seed, profile: p.profile, length: p.length, include_negative: p.include_negative !== false, use_site_character: p.use_site_character === true };
+}
+
+// source/extension/src/lib/site-status.js
+function siteFailure(err = {}) {
+  const code = typeof err.code === "string" ? err.code : "SITE_ERROR";
+  const message = typeof err.message === "string" ? err.message : "";
+  if (code === "NO_TAB") return { connected: false, tabFound: false, code: "NO_TAB", reason: message || "Вкладка сайта не открыта." };
+  if (code === "TIMEOUT" || code === "NO_BRIDGE") {
+    return { connected: false, tabFound: true, code: "NO_BRIDGE", reason: "Сайт открыт, но мост расширения на нём не отвечает: на сайте не установлен мост (docs/04-SERVER-SETUP.md) или открыта старая версия страницы — обновите вкладку (Ctrl+F5)." };
+  }
+  if (code === "VERSION_MISMATCH") return { connected: false, tabFound: true, code: "BRIDGE_VERSION", reason: "Версия моста на сайте не совпадает с версией расширения: обновите сайт или расширение." };
+  return { connected: false, tabFound: true, code, reason: message || "Не удалось связаться с сайтом." };
 }
 
 // source/extension/src/lib/store.js
@@ -991,7 +1004,7 @@ function createSiteClient(origin) {
   return {
     async call(type, payload) {
       const tab = await findTab();
-      if (!tab) throw new AdapterError("SITE_NOT_FOUND", `Откройте ${origin}/ в этом окне Chrome.`);
+      if (!tab) throw new AdapterError("NO_TAB", `Откройте ${origin}/ в этом окне Chrome.`);
       const msg = { rps: 1, type: "SITE_CALL", req: { type, ...payload !== void 0 ? { payload } : {} } };
       let res;
       try {
@@ -1001,7 +1014,7 @@ function createSiteClient(origin) {
           await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/site-bridge.js"] });
           res = await chrome.tabs.sendMessage(tab.id, msg);
         } catch (e) {
-          throw new AdapterError("SITE_NOT_FOUND", `Не удалось связаться со вкладкой сайта: ${String(e?.message ?? e).slice(0, 120)}`);
+          throw new AdapterError("TAB_UNREACHABLE", `Не удалось связаться со вкладкой сайта: ${String(e?.message ?? e).slice(0, 120)}`);
         }
       }
       return { tab, res };
@@ -1020,11 +1033,11 @@ function createSiteClient(origin) {
 
 // source/extension/src/lib/chatgpt-selectors.js
 var SELECTORS = Object.freeze({
-  composer: ["#prompt-textarea", 'div.ProseMirror[contenteditable="true"]', 'textarea[name="prompt-textarea"]'],
-  send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]'],
-  stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]', 'button[aria-label^="Stop"]'],
-  turn: ['section[data-testid^="conversation-turn-"]', 'article[data-testid^="conversation-turn-"]'],
-  roleBlock: ["[data-message-author-role]"],
+  composer: ["#prompt-textarea", 'div.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][data-virtualkeyboard="true"]', 'textarea[name="prompt-textarea"]', 'form [contenteditable="true"][role="textbox"]'],
+  send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send message"]', 'button[aria-label^="Отправить"]'],
+  stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]', 'button[aria-label^="Stop"]', 'button[aria-label^="Остановить"]'],
+  turn: ['section[data-testid^="conversation-turn-"]', 'article[data-testid^="conversation-turn-"]', '[data-testid^="conversation-turn-"]', "article[data-turn]", "[data-turn-id]"],
+  roleBlock: ["[data-message-author-role]", "[data-message-id]"],
   // Сгенерированное изображение лежит вне [data-message-author-role] и отдаётся с /backend-api/estuary/content.
   image: ['img[src*="/backend-api/estuary/content"]', 'img[alt^="Generated image"]', 'img[src*=".oaiusercontent.com/"]'],
   loginUi: ['[data-testid="login-button"]', '[data-testid="signup-button"]', 'a[href*="/auth/login"]'],
@@ -1059,7 +1072,8 @@ var PATTERNS = Object.freeze({
 });
 
 // source/extension/src/lib/prompt.js
-var normText = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+var squash = (s) => String(s ?? "").replace(/\s+/g, "");
+var KEY_SEP = "";
 var NEGATIVE_MARK = /\b(avoid|do not include|negative prompt)\b/i;
 function composePrompt(job, settings = {}) {
   let body = String(job.prompt ?? "").trim();
@@ -1068,8 +1082,16 @@ function composePrompt(job, settings = {}) {
 Avoid: ${job.negative}.`;
   return `${settings.promptPrefix ?? ""}${body}${settings.promptSuffix ?? ""}`;
 }
+var KEY_FRAGMENTS = 12;
+var KEY_FRAGMENT_LEN = 20;
 function promptKey(text) {
-  return normText(text).slice(0, 60);
+  const s = squash(text);
+  if (s.length <= KEY_FRAGMENTS * KEY_FRAGMENT_LEN) return s;
+  const last = s.length - KEY_FRAGMENT_LEN;
+  return Array.from({ length: KEY_FRAGMENTS }, (_, k) => {
+    const at = Math.floor(k * last / (KEY_FRAGMENTS - 1));
+    return s.slice(at, at + KEY_FRAGMENT_LEN);
+  }).join(KEY_SEP);
 }
 
 // source/extension/src/lib/chatgpt-classify.js
@@ -1082,10 +1104,14 @@ function matchAny(text, list) {
 }
 function findUserTurn(snap, key) {
   if (!key) return null;
+  const needles = String(key).split(KEY_SEP).map(squash).filter(Boolean);
+  if (!needles.length) return null;
   const turns = snap.turns ?? [];
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
-    if (t.role === "user" && normText(t.text).startsWith(key)) return t;
+    if (t.role !== "user") continue;
+    const text = squash(t.text);
+    if (needles.every((n) => text.includes(n))) return t;
   }
   return null;
 }
@@ -1093,14 +1119,16 @@ var BLOCK_TEXT = {
   CAPTCHA: "Обнаружена проверка безопасности (CAPTCHA/Cloudflare).",
   AUTH_REQUIRED: "Страница ChatGPT просит войти в аккаунт.",
   RATE_LIMIT: "ChatGPT сообщил об ограничении.",
-  UI_CHANGED: "Не найдено поле ввода или кнопка отправки."
+  UI_CHANGED: "Не найдено поле ввода сообщения ChatGPT."
 };
 function analyzeSnapshot(snap, ctx = {}) {
   const out = {
     blocker: null,
     offline: snap.online === false,
     generating: Boolean(snap.hasStop),
-    uiMissing: !snap.hasComposer || !snap.hasSend && !snap.hasStop,
+    // В пустом поле ввода ChatGPT нет кнопки отправки (она появляется с текстом), поэтому о «изменении интерфейса» говорит только
+    // отсутствие самого поля ввода; кнопка проверяется после вставки текста.
+    uiMissing: !snap.hasComposer,
     userTurn: null,
     newImages: [],
     smallImages: [],
@@ -1773,7 +1801,13 @@ var Orchestrator = class {
     const tabId = r0.chat.tabId;
     try {
       if (job.submitted || job.attempts > 1) {
-        const loc = await this.d.page.locate(tabId, { key, minSide: s.minImageSide, usedKeys: this.#usedKeys(batch.batch_id) });
+        const find = () => this.d.page.locate(tabId, { key, minSide: s.minImageSide, usedKeys: this.#usedKeys(batch.batch_id) });
+        let loc = await find();
+        for (let i = 0; i < 8 && !loc.found && job.submitted; i++) {
+          await this.d.sleep(1500);
+          if (this.#stale(r0)) return true;
+          loc = await find();
+        }
         if (this.#stale(r0)) return true;
         if (loc.found && loc.images?.length) {
           await this.#go("downloading", { job, jobStatus: "downloading", jobPatch: { candidates: loc.images, downloads: null, resume_from: "downloading" }, events: [ev("info", "REATTACH", "Изображение найдено в беседе — повторная отправка не нужна")] });
@@ -1789,6 +1823,7 @@ var Orchestrator = class {
           });
           return true;
         }
+        if (!loc.found && job.submitted) throw new AdapterError("SENT_NOT_VISIBLE", "Промпт уже отправлялся, но в беседе его не видно.");
       }
       const token = `${job.image_job_id}#${job.submit_seq ?? 0}`;
       const res = await this.d.page.submit(tabId, { jobId: job.image_job_id, text, key, token });
@@ -1797,9 +1832,9 @@ var Orchestrator = class {
       await this.#go("waiting", {
         job,
         jobStatus: "waiting",
-        jobPatch: { submitted: { at: iso(this.now()), token, baseline: res.baseline ?? null, chat_url: res.url ?? null, user_turn_index: res.userTurnIndex ?? null }, error: null },
+        jobPatch: { submitted: { at: iso(this.now()), token, baseline: res.baseline ?? null, chat_url: res.url ?? null, user_turn_index: res.userTurnIndex ?? null, unverified: res.unverified === true }, error: null },
         runnerPatch: { last_progress_at: this.now(), progress_sig: null, chat: { ...r0.chat, url: res.url ?? r0.chat.url } },
-        events: [ev("info", "SUBMITTED", "Промпт отправлен в ChatGPT")]
+        events: [res.unverified ? ev("warn", "SUBMITTED_UNVERIFIED", "Промпт, по-видимому, отправлен, но расширение не видит его в беседе — жду подтверждения; повторно отправлять не буду.") : ev("info", "SUBMITTED", "Промпт отправлен в ChatGPT")]
       });
       return true;
     } catch (e) {
@@ -1858,7 +1893,8 @@ var Orchestrator = class {
         return true;
       }
       case "blocked":
-        await this.#block(res.code, res.message, { job, keepSubmitted: res.code !== "RATE_LIMIT" });
+        if (res.code === "SENT_NOT_VISIBLE") await this.#handleError({ code: res.code, message: res.message }, { job });
+        else await this.#block(res.code, res.message, { job, keepSubmitted: res.code !== "RATE_LIMIT" });
         return true;
       case "error":
         await this.#handleError({ code: res.code, message: res.message }, { job });
@@ -2046,6 +2082,11 @@ var Orchestrator = class {
     const info = errInfo(code);
     const detail = err?.message && err.message !== code ? err.message : info.ru;
     const cur = job ?? (this.store.runner.job_id ? this.store.getJob(this.store.runner.job_id) : null);
+    if (code === "SENT_NOT_VISIBLE" && cur) {
+      const seen = (cur.not_visible ?? 0) + 1;
+      if (seen >= 2) return this.#failAndBlock(code, detail, cur);
+      return this.#block(code, detail, { job: cur, keepSubmitted: true, jobExtra: { not_visible: seen } });
+    }
     switch (info.kind) {
       case "blocking":
         return this.#block(code, detail, { job: cur, keepSubmitted });
@@ -2057,18 +2098,35 @@ var Orchestrator = class {
         return this.#failJob(code, detail, cur);
     }
   }
-  async #block(code, detail, { job = null, keepSubmitted = true } = {}) {
+  async #block(code, detail, { job = null, keepSubmitted = true, jobExtra = {} } = {}) {
     const info = errInfo(code);
     const message = detail && detail !== info.ru ? `${info.ru} (${detail})` : info.ru;
     const cur = job ?? (this.store.runner.job_id ? this.store.getJob(this.store.runner.job_id) : null);
     await this.#go("blocked", {
       job: cur,
       jobStatus: cur && IN_FLIGHT.has(cur.status) ? "pending" : cur?.status,
-      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1) } } : {},
+      jobPatch: cur ? { error: { code, message: info.ru }, submitted: keepSubmitted ? cur.submitted : null, ...keepSubmitted ? {} : { attempts: Math.max(0, cur.attempts - 1) }, ...jobExtra } : {},
       runnerPatch: { block: { code, message, at: iso(this.now()) }, pause_requested: false, job_id: cur?.image_job_id ?? this.store.runner.job_id },
       events: [ev("error", code, message)]
     });
     this.#notify("blocked", "Очередь остановлена", message);
+    return true;
+  }
+  /** Промпт мог уйти, но найти его не удаётся: задание — ошибочное (повтор только по «Повторить ошибки»), очередь остановлена. */
+  async #failAndBlock(code, detail, job) {
+    const info = errInfo(code);
+    const t = this.now();
+    const message = detail && detail !== info.ru ? `${info.ru} (${detail})` : info.ru;
+    await this.#go("blocked", {
+      job,
+      jobStatus: "failed",
+      jobPatch: { error: { code, message: info.ru }, completed_at: iso(t), submitted: null, candidates: null, downloads: null, resume_from: null, not_visible: 0 },
+      runnerPatch: { block: { code, message, at: iso(t) }, pause_requested: false, job_id: job.image_job_id },
+      events: [ev("error", code, `Задание помечено ошибочным: ${message}`)]
+    });
+    this.#notify("blocked", "Очередь остановлена", message);
+    await this.#writeMetadata(job.batch_id, job.character_id, { manifest: this.#manifestDue(job.batch_id, job.character_id) }).catch(() => {
+    });
     return true;
   }
   async #networkError(detail, job) {
@@ -2250,11 +2308,21 @@ async function wake() {
   woken = true;
   if (ACTIVE_STATES.has(store.runner.state)) orch.kick();
 }
-var lastSite = { connected: false };
+var lastSite = { connected: false, checking: true };
+var siteCheckedAt = 0;
+var siteInflight = null;
 var ports = /* @__PURE__ */ new Set();
 var pushTimer = null;
+function checkSite() {
+  siteInflight ??= siteStatus().finally(() => {
+    siteCheckedAt = Date.now();
+    siteInflight = null;
+  });
+  return siteInflight;
+}
 async function view() {
   await boot;
+  if (!siteInflight && Date.now() - siteCheckedAt > (lastSite.connected ? 3e4 : 3e3)) void checkSite();
   const chatgpt = await chatPage.status(store.runner.chat?.tabId ?? null).catch(() => ({ tabFound: false }));
   return orch.getView({ site: lastSite, chatgpt });
 }
@@ -2300,11 +2368,14 @@ var viewResp = async () => ({ view: await view() });
 async function siteStatus() {
   try {
     const { tab, res } = await site.call("hello");
-    if (!res?.ok) throw new AdapterError(res?.error?.code ?? "SITE_ERROR", res?.error?.message ?? "Мост сайта не отвечает. Сайт нужно обновить (см. docs/04-SERVER-SETUP.md).");
-    const p = res.payload ?? {};
-    lastSite = { connected: true, tabId: tab.id, origin: SITE_ORIGIN, engine: String(p.engine ?? ""), bridge_version: p.bridge_version ?? null, limits: p.limits ?? null, site_character: p.site_character === true, profiles: Array.isArray(p.profiles) ? p.profiles : null, lengths: Array.isArray(p.lengths) ? p.lengths : null };
+    if (!res?.ok) {
+      lastSite = { ...siteFailure({ code: res?.error?.code, message: res?.error?.message }), tabId: tab.id };
+    } else {
+      const p = res.payload ?? {};
+      lastSite = { connected: true, tabFound: true, tabId: tab.id, origin: SITE_ORIGIN, engine: String(p.engine ?? ""), bridge_version: p.bridge_version ?? null, limits: p.limits ?? null, site_character: p.site_character === true, profiles: Array.isArray(p.profiles) ? p.profiles : null, lengths: Array.isArray(p.lengths) ? p.lengths : null };
+    }
   } catch (e) {
-    lastSite = { connected: false, reason: toError(e).message };
+    lastSite = siteFailure(toError(e));
   }
   schedulePush();
   return lastSite;
@@ -2315,7 +2386,7 @@ async function addParsed(parsed, test) {
 }
 var handlers = {
   GET_VIEW: viewResp,
-  SITE_STATUS: async () => ({ site: await siteStatus() }),
+  SITE_STATUS: async () => ({ site: await checkSite() }),
   SITE_LIST_PRESETS: async () => {
     const { res } = await site.call("list-presets");
     if (!res?.ok) throw new CommandError(res?.error?.code ?? "SITE_ERROR", res?.error?.message ?? "Не удалось получить пресеты.");
@@ -2402,11 +2473,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   orch.kick();
 });
 chrome.tabs.onRemoved.addListener(async (tabId) => {
+  if (tabId === lastSite.tabId && lastSite.connected) {
+    lastSite = siteFailure({ code: "NO_TAB" });
+    siteCheckedAt = 0;
+  }
   await wake();
   orch.onTabRemoved(tabId);
   schedulePush();
 });
-chrome.tabs.onUpdated.addListener((_id, info) => {
+chrome.tabs.onUpdated.addListener((_id, info, tab) => {
+  if (info.status === "complete" && String(tab?.url ?? "").startsWith(`${SITE_ORIGIN}/`)) siteCheckedAt = 0;
   if (info.status === "complete" || info.url) schedulePush();
 });
 chrome.tabs.onActivated.addListener(() => schedulePush());

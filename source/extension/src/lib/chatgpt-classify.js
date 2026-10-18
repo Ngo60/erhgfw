@@ -1,7 +1,7 @@
 // Чистый анализ снимка страницы ChatGPT (без DOM): блокировки, ход генерации, найденные новые изображения.
 // Используется и content script (во время ожидания), и service worker (проверка перед отправкой), и тестами.
 import { PATTERNS } from './chatgpt-selectors.js';
-import { normText } from './prompt.js';
+import { KEY_SEP, squash } from './prompt.js';
 
 export function matchAny(text, list) {
   for (const re of list) {
@@ -11,13 +11,20 @@ export function matchAny(text, list) {
   return null;
 }
 
-/** Последний пользовательский ход, текст которого начинается с ключа промпта. */
+/**
+ * Последний пользовательский ход, содержащий все фрагменты ключа (см. promptKey). Пробелы не учитываются: ChatGPT склеивает
+ * абзацы без пробела, а скрытый заголовок «You said:» перед текстом не мешает.
+ */
 export function findUserTurn(snap, key) {
   if (!key) return null;
+  const needles = String(key).split(KEY_SEP).map(squash).filter(Boolean);
+  if (!needles.length) return null;
   const turns = snap.turns ?? [];
   for (let i = turns.length - 1; i >= 0; i--) {
     const t = turns[i];
-    if (t.role === 'user' && normText(t.text).startsWith(key)) return t;
+    if (t.role !== 'user') continue;
+    const text = squash(t.text);
+    if (needles.every((n) => text.includes(n))) return t;
   }
   return null;
 }
@@ -26,7 +33,7 @@ const BLOCK_TEXT = {
   CAPTCHA: 'Обнаружена проверка безопасности (CAPTCHA/Cloudflare).',
   AUTH_REQUIRED: 'Страница ChatGPT просит войти в аккаунт.',
   RATE_LIMIT: 'ChatGPT сообщил об ограничении.',
-  UI_CHANGED: 'Не найдено поле ввода или кнопка отправки.',
+  UI_CHANGED: 'Не найдено поле ввода сообщения ChatGPT.',
 };
 
 /**
@@ -38,7 +45,9 @@ export function analyzeSnapshot(snap, ctx = {}) {
     blocker: null,
     offline: snap.online === false,
     generating: Boolean(snap.hasStop),
-    uiMissing: !snap.hasComposer || (!snap.hasSend && !snap.hasStop),
+    // В пустом поле ввода ChatGPT нет кнопки отправки (она появляется с текстом), поэтому о «изменении интерфейса» говорит только
+    // отсутствие самого поля ввода; кнопка проверяется после вставки текста.
+    uiMissing: !snap.hasComposer,
     userTurn: null,
     newImages: [],
     smallImages: [],
@@ -103,7 +112,7 @@ export function decideWait(snap, ctx, watch, nowMs, opts = {}) {
   if (a.offline) return { result: { status: 'error', code: 'NETWORK', message: 'Браузер сообщает об отсутствии сети.' }, watch: w };
   if (!a.userTurn) {
     w.missingSince ??= nowMs;
-    if (nowMs - w.missingSince >= promptGraceMs) return { result: { status: 'error', code: 'PROMPT_NOT_ACCEPTED', message: 'Отправленный промпт не найден в беседе.' }, watch: w };
+    if (nowMs - w.missingSince >= promptGraceMs) return { result: { status: 'blocked', code: 'SENT_NOT_VISIBLE', message: 'Отправленный промпт не найден в беседе.' }, watch: w };
     return { result: { status: 'pending', sig: 'no-user-turn', phase: 'locating' }, watch: w };
   }
   w.missingSince = null;

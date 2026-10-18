@@ -33,6 +33,7 @@ main{flex:1;min-height:0;display:flex;flex-direction:column}
 .icon-btn{background:#f4f4f4;color:#0d0d0d}
 .send-btn,.stop-btn,.btn.round{background:#0d0d0d;color:#fff}
 .send-btn:disabled,.btn.round.off{background:#d7d7d7;cursor:default}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .slot{display:inline-flex}
 #challenge-stage{position:fixed;inset:0;z-index:2147483000;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
 #challenge-stage iframe{width:300px;height:65px;border:1px solid #ddd}
@@ -62,6 +63,8 @@ function clientMain(BOOT) {
 
   const emptyView = () => ({ id: null, exists: false, version: 0, running: false, error: false, turns: [] });
 
+  const TURN_ATTRS = ['data-message-author-role', 'data-message-id'];
+
   function h(tag, attrs, ...kids) {
     const e = document.createElement(tag);
     if (attrs) {
@@ -69,6 +72,7 @@ function clientMain(BOOT) {
         const v = attrs[k];
         if (v === false || v == null) continue;
         if (S.ui.uiChanged && STRIPPED_WHEN_UI_CHANGED.includes(k)) continue;
+        if (S.ui.turnsStripped && TURN_ATTRS.includes(k)) continue;
         if (k === 'class') e.className = v;
         else e.setAttribute(k, v === true ? '' : String(v));
       }
@@ -306,12 +310,18 @@ function clientMain(BOOT) {
     return b;
   }
 
+  function makeVoiceButton() {
+    return S.ui.uiChanged
+      ? h('div', { class: 'btn round off' }, '\u266a')
+      : h('button', { type: 'button', class: 'icon-btn', 'data-testid': 'composer-speech-button', 'aria-label': 'Start voice mode' }, '\u266a');
+  }
+
   function updateControls() {
     if (!els.slot) return;
-    const want = isRunning() ? 'stop' : 'send';
+    const want = isRunning() ? 'stop' : canSend() ? 'send' : 'voice';
     if (slotKind !== want) {
       els.send = want === 'send' ? makeSendButton() : null;
-      els.slot.replaceChildren(want === 'send' ? els.send : makeStopButton());
+      els.slot.replaceChildren(want === 'send' ? els.send : want === 'stop' ? makeStopButton() : makeVoiceButton());
       slotKind = want;
     }
     if (want === 'send') {
@@ -435,12 +445,18 @@ function clientMain(BOOT) {
   }
 
   function fillTurn(sec, t) {
+    if (S.ui.turnsHidden) {
+      sec.replaceChildren();
+      return;
+    }
     if (t.role === 'user') {
       sec.replaceChildren(
+        h('h5', { class: 'sr-only' }, 'You said:'),
         h('div', { 'data-message-author-role': 'user', 'data-message-id': t.msgId }, h('div', { class: 'whitespace-pre-wrap' }, t.text)),
       );
     } else if (t.kind === 'text') {
       sec.replaceChildren(
+        h('h6', { class: 'sr-only' }, 'ChatGPT said:'),
         h('div', { 'data-message-author-role': 'assistant', 'data-message-id': t.msgId }, h('div', { class: 'markdown prose' }, h('p', null, t.text))),
       );
     } else if (t.kind === 'image') {
@@ -469,9 +485,14 @@ function clientMain(BOOT) {
         turnEls.set(t.id, sec);
       }
       seen.add(t.id);
-      sec.setAttribute('data-turn', t.role);
-      if (S.ui.uiChanged) sec.removeAttribute('data-testid');
-      else sec.setAttribute('data-testid', 'conversation-turn-' + (i + 1));
+      if (S.ui.turnsStripped) {
+        sec.removeAttribute('data-turn');
+        sec.removeAttribute('data-testid');
+      } else {
+        sec.setAttribute('data-turn', t.role);
+        if (S.ui.uiChanged) sec.removeAttribute('data-testid');
+        else sec.setAttribute('data-testid', 'conversation-turn-' + (i + 1));
+      }
       if (sec._rev !== t.rev) {
         fillTurn(sec, t);
         sec._rev = t.rev;

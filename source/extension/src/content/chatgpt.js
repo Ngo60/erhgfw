@@ -4,7 +4,7 @@
 import { analyzeSnapshot, decideWait, findUserTurn } from '../lib/chatgpt-classify.js';
 import { PATTERNS, SELECTOR_PROFILE, SELECTORS } from '../lib/chatgpt-selectors.js';
 import { validateCsMessage } from '../lib/messages.js';
-import { normText } from '../lib/prompt.js';
+import { KEY_SEP, normText, squash } from '../lib/prompt.js';
 
 const VERSION = 1;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -23,6 +23,9 @@ function all(list, root = document) {
   for (const selector of list) root.querySelectorAll(selector).forEach((e) => out.add(e));
   return [...out].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
 }
+
+/** Без вложенных друг в друга совпадений: иначе один ход будет посчитан дважды. */
+const topmost = (els) => els.filter((e) => !els.some((o) => o !== e && o.contains(e)));
 
 async function waitFor(fn, timeoutMs, stepMs = 100) {
   const end = Date.now() + timeoutMs;
@@ -52,22 +55,77 @@ function imageInfo(img) {
   return { key: imageKey(src), src, alt: (img.alt || '').slice(0, 100), w: img.naturalWidth || 0, h: img.naturalHeight || 0, complete: Boolean(img.complete) && img.naturalWidth > 0 };
 }
 
+const MIN_FALLBACK_SIDE = 128;
+const USER_TEXT_MAX = 12000;
+
+/** Крупные (или ещё грузящиеся) картинки внутри элемента — запасной путь, если селекторы изображений перестали подходить. */
+const largeImages = (root) => [...root.querySelectorAll('img')].filter((i) => !i.closest('form') && ((i.naturalWidth || 0) >= MIN_FALLBACK_SIDE || !i.complete));
+
+/**
+ * Запасной разбор беседы, когда разметка ходов не распознана: сообщение пользователя ищется по тексту (фрагменты ключа),
+ * всё после него считается ответом. Включается только если обычные селекторы ничего не нашли и передан ключ промпта.
+ */
+function structuralTurns(key) {
+  const root = document.querySelector('main') ?? document.body;
+  const needles = String(key ?? '').split(KEY_SEP).map(squash).filter(Boolean);
+  if (!root || !needles.length) return [];
+  const nodes = [];
+  let flat = '';
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement && !n.parentElement.closest('form, script, style, noscript, textarea, [hidden], [contenteditable="true"]') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
+  });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const s = squash(n.nodeValue);
+    if (!s) continue;
+    nodes.push({ n, to: flat.length + s.length });
+    flat += s;
+  }
+  const first = flat.lastIndexOf(needles[0]);
+  if (first < 0) return [];
+  let end = first + needles[0].length;
+  for (const needle of needles.slice(1)) {
+    const at = flat.indexOf(needle, first);
+    if (at < 0) return [];
+    end = Math.max(end, at + needle.length);
+  }
+  // Привязка к последнему текстовому узлу сообщения (а не к «контейнеру»): всё, что идёт после него в документе, — ответ.
+  const ref = nodes.find((x) => x.to >= end)?.n;
+  if (!ref) return [];
+  const following = (n) => n !== ref && Boolean(ref.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const reply = nodes.filter((x) => following(x.n)).map((x) => normText(x.n.nodeValue)).filter(Boolean).join(' ').slice(0, 1500);
+  return [
+    { i: 0, role: 'user', text: flat.slice(first, end), images: [] },
+    { i: 1, role: 'assistant', text: reply, images: largeImages(root).filter(following).map(imageInfo) },
+  ];
+}
+
 /** Снимок страницы: компактный JSON, который анализируется чистыми функциями (lib/chatgpt-classify.js). */
-export function collectSnapshot() {
+export function collectSnapshot(key = null) {
   const composer = first(SELECTORS.composer);
   const send = first(SELECTORS.send);
   const stop = first(SELECTORS.stop);
-  const turnEls = all(SELECTORS.turn);
-  const roleBlocks = all(SELECTORS.roleBlock);
+  const turnEls = topmost(all(SELECTORS.turn));
+  const roleBlocks = topmost(all(SELECTORS.roleBlock));
   const base = turnEls.length ? turnEls : roleBlocks;
-  const turns = base.slice(-14).map((el, k, arr) => {
+  let turns = base.slice(-14).map((el, k, arr) => {
     const index = base.length - arr.length + k;
     const block = el.matches('[data-message-author-role]') ? el : el.querySelector('[data-message-author-role]');
     let role = el.getAttribute('data-turn') || block?.getAttribute('data-message-author-role') || null;
-    const imgs = role === 'user' ? [] : all(SELECTORS.image, el).filter((i) => !i.closest('[data-message-author-role="user"]')).map(imageInfo);
+    const byRole = role === 'user' ? [] : all(SELECTORS.image, el);
+    const imgs = (role === 'user' ? [] : byRole.length ? byRole : largeImages(el)).filter((i) => !i.closest('[data-message-author-role="user"]')).map(imageInfo);
     if (!role) role = imgs.length ? 'assistant' : 'unknown';
-    return { i: index, role, text: normText(el.textContent).slice(0, 400), images: imgs };
+    return { i: index, role, text: normText(el.textContent).slice(0, role === 'user' ? USER_TEXT_MAX : 400), images: imgs };
   });
+  let turnCount = base.length;
+  let structural = false;
+  if (!base.length && key) {
+    const found = structuralTurns(key);
+    if (found.length) {
+      turns = found;
+      turnCount = found.length;
+      structural = true;
+    }
+  }
   const bodyText = !composer && document.body ? normText(document.body.innerText).slice(0, 2000) : '';
   return {
     t: Date.now(),
@@ -83,10 +141,14 @@ export function collectSnapshot() {
     captchaText: PATTERNS.captcha.some((re) => re.test(bodyText)),
     authUrl: /^\/(auth|login)(\/|$)/.test(location.pathname),
     turns,
-    turnCount: base.length,
+    turnCount,
+    structural,
     alerts: all(SELECTORS.alert).map((e) => normText(e.textContent).slice(0, 300)).filter(Boolean).slice(0, 8),
   };
 }
+
+/** Для передачи в service worker: тексты ходов укорочены (полный текст нужен только внутри страницы для поиска ключа). */
+const slimSnapshot = (s) => ({ ...s, turns: s.turns.map((t) => ({ ...t, text: t.text.slice(0, 200) })) });
 
 function selectAll(el) {
   const sel = getSelection();
@@ -141,10 +203,22 @@ async function submit({ text, key, token }) {
   if (!button) throw fail('UI_CHANGED', 'Кнопка отправки недоступна после вставки текста.');
   button.click();
   const after = await waitFor(() => {
-    const s = collectSnapshot();
+    const s = collectSnapshot(key);
     return findUserTurn(s, key) ? s : null;
   }, 20000);
-  if (!after) throw fail('PROMPT_NOT_ACCEPTED', 'Отправленное сообщение не появилось в беседе.');
+  if (!after) {
+    // Кнопка нажата, но ход не распознан. Очистилось поле или началась генерация — сообщение, скорее всего, ушло, и повторно его
+    // отправлять нельзя (решение о блокировке принимает оркестратор). Текст остался в поле — отправка не состоялась.
+    const now = collectSnapshot(key);
+    const field = first(SELECTORS.composer);
+    const typed = field ? normText(readComposer(field.el)).length : 0;
+    if (now.hasStop || !field || typed < Math.min(10, normText(text).length / 2)) {
+      const unverified = { accepted: true, unverified: true, baseline, url: location.href, userTurnIndex: null };
+      submissions.set(token, unverified);
+      return unverified;
+    }
+    throw fail('PROMPT_NOT_ACCEPTED', 'Сообщение не отправилось: текст остался в поле ввода.');
+  }
   const result = { accepted: true, baseline, url: location.href, userTurnIndex: findUserTurn(after, key).i };
   submissions.set(token, result);
   return result;
@@ -157,7 +231,7 @@ async function waitSlice({ key, baseline, usedKeys, minSide, sliceMs }) {
   const end = Date.now() + (sliceMs ?? 20000);
   let watch = watches.get(key) ?? {};
   for (;;) {
-    const d = decideWait(collectSnapshot(), ctx, watch, Date.now());
+    const d = decideWait(collectSnapshot(key), ctx, watch, Date.now());
     watch = d.watch;
     if (d.result.status !== 'pending') {
       watches.delete(key);
@@ -172,26 +246,131 @@ async function waitSlice({ key, baseline, usedKeys, minSide, sliceMs }) {
 }
 
 function locate({ key, minSide, usedKeys }) {
-  const snap = collectSnapshot();
+  const snap = collectSnapshot(key);
   const turn = findUserTurn(snap, key);
   if (!turn) return { found: false, generating: snap.hasStop, images: [], url: snap.url };
   const a = analyzeSnapshot(snap, { key, minSide: minSide ?? 0, usedKeys: usedKeys ?? [] });
   return { found: true, generating: snap.hasStop, images: a.newImages, url: snap.url, userTurnIndex: turn.i };
 }
 
-function diagnose() {
-  const groups = ['composer', 'send', 'stop', 'turn', 'roleBlock', 'image', 'loginUi', 'captchaUi', 'alert'];
-  const items = groups.map((name) => {
-    const hit = first(SELECTORS[name]);
-    return { name, found: Boolean(hit), selector: hit?.selector ?? null, count: all(SELECTORS[name]).length };
+function clearComposer(el) {
+  el.focus();
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set.call(el, '');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+  selectAll(el);
+  document.execCommand('delete');
+}
+
+/**
+ * Кнопка отправки в ChatGPT видна только при непустом поле. Для проверки в ПУСТОЕ поле на мгновение вставляется точка
+ * (отправка не выполняется) и сразу удаляется. Черновик пользователя не трогается.
+ */
+async function probeSend() {
+  const field = first(SELECTORS.composer);
+  if (!field) return { state: 'unknown', note: 'поле ввода не найдено' };
+  if (first(SELECTORS.stop)) return { state: 'unknown', note: 'идёт генерация — проверка отложена' };
+  if (normText(readComposer(field.el))) return { state: 'unknown', note: 'в поле ввода есть ваш черновик — не трогаю; очистите поле и повторите' };
+  await setComposerText(field.el, '.');
+  const inserted = composerMatches(field.el, '.');
+  const hit = inserted ? await waitFor(() => first(SELECTORS.send), 2500) : null;
+  clearComposer(field.el);
+  await sleep(250);
+  const restored = !normText(readComposer(field.el));
+  if (!inserted) return { state: 'unknown', note: 'вставка текста в поле ввода не сработала — так расширение не сможет отправлять промпты', restored, insertFailed: true };
+  return { state: hit ? 'found' : 'missing', selector: hit?.selector ?? null, restored };
+}
+
+const maskIds = (s) => String(s).replace(/[0-9a-f]{8,}(?:-[0-9a-f]{4,})*/gi, '…');
+
+/** Обзор структуры страницы без текста сообщений: показывает, чем реальная разметка отличается от ожидаемой. */
+function surveyPage() {
+  const count = (sel) => document.querySelectorAll(sel).length;
+  const ids = new Map();
+  document.querySelectorAll('[data-testid]').forEach((e) => {
+    const v = (e.getAttribute('data-testid') ?? '').replace(/\d+/g, 'N').slice(0, 40);
+    ids.set(v, (ids.get(v) ?? 0) + 1);
   });
+  const testids = [...ids].sort((x, y) => y[1] - x[1]).slice(0, 12).map(([k, n]) => `${k}×${n}`);
+  const bigImages = [...document.images].filter((i) => i.naturalWidth >= 256 && i.naturalHeight >= 256);
+  const big = bigImages.slice(0, 5).map((i) => {
+    let where = '?';
+    try {
+      const u = new URL(i.currentSrc || i.src, location.href);
+      where = `${u.hostname}${maskIds(u.pathname)}`;
+    } catch {
+      // оставляем «?»
+    }
+    return `${where} ${i.naturalWidth}×${i.naturalHeight}${i.closest('[data-message-author-role]') ? ' (внутри блока роли)' : ' (вне блока роли)'}`;
+  });
+  const tags = ['main', 'article', 'section', 'form'].map((t) => `${t}×${count(t)}`).join(' ');
+  const roles = ['user', 'assistant'].map((r) => `${r}×${count(`[data-message-author-role="${r}"]`)}`).join(' ');
+  return { tags, roles, testids, big, bigCount: bigImages.length, lang: document.documentElement.lang || '' };
+}
+
+const DIAG_SPEC = {
+  composer: { role: 'required', label: 'поле ввода' },
+  send: { role: 'required', label: 'кнопка отправки' },
+  stop: { role: 'info', label: 'кнопка «Стоп»' },
+  turn: { role: 'info', label: 'ходы беседы' },
+  roleBlock: { role: 'info', label: 'блоки сообщений' },
+  image: { role: 'info', label: 'изображения в беседе' },
+  loginUi: { role: 'alarm', label: 'кнопки входа (их быть не должно)' },
+  captchaUi: { role: 'alarm', label: 'проверка CAPTCHA (её быть не должно)' },
+  alert: { role: 'info', label: 'уведомления страницы' },
+};
+
+function stateOf(item) {
+  if (item.role === 'required') return item.found ? 'ok' : 'bad';
+  if (item.role === 'alarm') return item.found ? 'bad' : 'ok';
+  return item.found ? 'ok' : 'info';
+}
+
+async function diagnose() {
+  const items = Object.entries(DIAG_SPEC).map(([name, spec]) => {
+    const hit = first(SELECTORS[name]);
+    const item = { name, label: spec.label, role: spec.role, found: Boolean(hit), selector: hit?.selector ?? null, count: all(SELECTORS[name]).length };
+    return { ...item, state: stateOf(item) };
+  });
+  const by = (n) => items.find((i) => i.name === n);
   const snap = collectSnapshot();
-  const notes = [`Профиль селекторов: ${SELECTOR_PROFILE}`, `URL: ${location.origin}${location.pathname}`, `Ходов в беседе: ${snap.turnCount}`];
-  const need = ['composer', 'send'];
-  const ok = need.every((n) => items.find((i) => i.name === n)?.found) && !snap.loginUi && !snap.captchaUi;
+  const survey = surveyPage();
+  const notes = [`Профиль селекторов: ${SELECTOR_PROFILE}`, `Страница: ${location.origin}${maskIds(location.pathname)}`, `Ходов в беседе: ${snap.turnCount}`];
+  if (survey.lang) notes.push(`Язык страницы: ${survey.lang}`);
+
+  if (!by('send').found) {
+    const probe = await probeSend();
+    const send = by('send');
+    send.state = probe.state === 'found' ? 'ok' : probe.state === 'missing' ? 'bad' : 'unknown';
+    send.found = probe.state === 'found';
+    if (probe.selector) {
+      send.selector = probe.selector;
+      send.count = 1;
+    }
+    if (probe.note) send.note = probe.note;
+    if (probe.state === 'found') notes.push('Кнопка отправки найдена после ввода символа в пустое поле (символ удалён, отправка не выполнялась).');
+    if (probe.restored === false) notes.push('Внимание: не удалось очистить поле ввода после проверки — очистите его вручную.');
+  }
+
+  const titled = location.pathname.startsWith('/c/') && !/^\s*(ChatGPT)?\s*$/.test(document.title);
+  if (snap.turnCount === 0 && titled) {
+    for (const n of ['turn', 'roleBlock']) by(n).state = 'bad';
+    notes.push('Беседа открыта и имеет название, но ни одного сообщения не распознано: страница ещё грузится или изменилась разметка. Расширение попробует найти отправленное сообщение по его тексту; если не найдёт — остановит очередь, а не повторит отправку.');
+  }
+  if (survey.bigCount > 0 && by('image').count === 0) {
+    by('image').state = 'bad';
+    notes.push('На странице есть крупные изображения, но селектор изображений их не находит.');
+  }
   if (snap.loginUi) notes.push('Обнаружены кнопки входа: нужен вход в аккаунт.');
   if (snap.captchaUi || snap.captchaText) notes.push('Обнаружена проверка безопасности (CAPTCHA).');
-  if (!items.find((i) => i.name === 'send')?.found && items.find((i) => i.name === 'composer')?.found) notes.push('Кнопка отправки видна только при непустом поле ввода — это нормально для пустой беседы.');
+
+  notes.push(`Структура: ${survey.tags} · роли: ${survey.roles}`);
+  if (survey.testids.length) notes.push(`data-testid на странице: ${survey.testids.join(', ')}`);
+  if (survey.big.length) notes.push(`Крупные изображения: ${survey.big.join('; ')}`);
+
+  const ok = items.every((i) => i.state !== 'bad') && by('send').state === 'ok' && by('composer').state === 'ok';
   return { ok, items, notes };
 }
 
@@ -203,12 +382,12 @@ function cancel() {
 
 const HANDLERS = {
   CS_PING: () => ({ version: VERSION, url: location.href, ready: Boolean(first(SELECTORS.composer)) || SELECTORS.loginUi.some((s) => document.querySelector(s)) || SELECTORS.captchaUi.some((s) => document.querySelector(s)) }),
-  CS_SNAPSHOT: () => ({ snapshot: collectSnapshot() }),
+  CS_SNAPSHOT: () => ({ snapshot: slimSnapshot(collectSnapshot()) }),
   CS_SUBMIT: (m) => submit(m),
   CS_WAIT: (m) => waitSlice(m),
   CS_LOCATE: (m) => locate(m),
   CS_CANCEL: () => cancel(),
-  CS_DIAGNOSE: () => ({ report: diagnose() }),
+  CS_DIAGNOSE: async () => ({ report: await diagnose() }),
 };
 
 if (!globalThis.__rpsChatGpt) {

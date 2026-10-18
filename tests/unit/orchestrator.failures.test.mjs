@@ -340,3 +340,64 @@ test('журнал: экспорт JSON/CSV; seq непрерывен', async ()
   assert.match(c.filename, /\.csv$/);
   assert.ok(c.text.startsWith('\uFEFFseq,ts,level'));
 });
+
+test('отправленный промпт не виден в беседе → остановка без повторной отправки; вторично — ошибка задания', async () => {
+  const { env, id } = await ready(2);
+  env.page.hideTurns = true;
+  await env.orch.start(id);
+  assert.ok(await runUntil(env, quiet(env, 'blocked'), { maxVirtualMs: 300e3 }));
+  assert.equal(env.store.runner.block.code, 'SENT_NOT_VISIBLE');
+  assert.equal(env.page.sent.length, 1);
+  const first = env.store.jobsOf(id)[0];
+  assert.equal(first.status, 'pending');
+  assert.ok(first.submitted, 'метка отправки сохранена');
+  await runUntil(env, () => false, { maxVirtualMs: 3600e3, maxIter: 3000 });
+  assert.equal(env.page.sent.length, 1, 'сам очередь ничего не повторяет');
+  await env.orch.resume();
+  assert.ok(await runUntil(env, quiet(env, 'blocked'), { maxVirtualMs: 300e3 }));
+  assert.equal(env.page.sent.length, 1, 'после «Продолжить» повторной отправки нет');
+  const failed = env.store.jobsOf(id)[0];
+  assert.deepEqual([failed.status, failed.error.code], ['failed', 'SENT_NOT_VISIBLE']);
+  assert.equal(env.store.jobsOf(id)[1].status, 'pending', 'следующее задание не стартовало');
+});
+
+test('промпт виден после поздней отрисовки беседы: «Продолжить» находит его без повторной отправки', async () => {
+  const { env, id } = await ready(1);
+  env.page.hideTurns = true;
+  await env.orch.start(id);
+  assert.ok(await runUntil(env, quiet(env, 'blocked'), { maxVirtualMs: 300e3 }));
+  env.page.hideTurns = false;
+  await env.orch.resume();
+  assert.ok(await runUntil(env, batchDone(env, id)));
+  assert.equal(env.page.sent.length, 1);
+  assert.equal(env.store.jobsOf(id)[0].status, 'completed');
+});
+
+test('неподтверждённая отправка: ждём появления сообщения, повторно не отправляем, в журнале предупреждение', async () => {
+  const { env, id } = await ready(1);
+  env.page.unverifiedAck = true;
+  await env.orch.start(id);
+  assert.ok(await runUntil(env, batchDone(env, id)));
+  assert.equal(env.page.sent.length, 1);
+  assert.ok(env.store.events(id, 200).some((e) => e.code === 'SUBMITTED_UNVERIFIED'));
+});
+
+test('пустое поле ввода без кнопки отправки не блокирует очередь (как в настоящем ChatGPT)', async () => {
+  const { env, id } = await ready(2);
+  assert.equal(env.page.snapshot().hasSend, false);
+  await env.orch.start(id);
+  assert.ok(await runUntil(env, batchDone(env, id)));
+  assert.equal(env.store.jobsOf(id).every((j) => j.status === 'completed'), true);
+});
+
+test('одинаковый префикс у всех заданий: после выгрузки worker «не отправленный» промпт ищется по своему ключу', async () => {
+  const { env, id } = await ready(3);
+  await env.orch.start(id);
+  assert.ok(await runUntil(env, () => env.page.sent.length === 2 && env.store.runner.state === 'waiting'));
+  const keys = new Set(env.page.sent.map((x) => x.key));
+  assert.equal(keys.size, 2, 'ключи разных заданий различаются');
+  const env2 = restartWorker(env);
+  await env2.orch.init({ reason: 'wake' });
+  assert.ok(await runUntil(env2, batchDone(env2, id)));
+  assert.equal(env2.page.sent.length, 3);
+});

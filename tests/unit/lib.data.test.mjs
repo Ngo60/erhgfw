@@ -6,6 +6,7 @@ import { analyzeSnapshot, decideWait, findUserTurn } from '../../source/extensio
 import { Store, defaultRunner } from '../../source/extension/src/lib/store.js';
 import { canonicalJson, isAllowedImageUrl, isChatGptUrl, parseBatch, parseImport, sanitizeSettings } from '../../source/extension/src/lib/validate.js';
 import { composePrompt, promptKey } from '../../source/extension/src/lib/prompt.js';
+import { siteFailure } from '../../source/extension/src/lib/site-status.js';
 import { sha256Hex } from '../../source/extension/src/lib/image.js';
 import { FakeArea, loadFixture } from './helpers/fakes.mjs';
 
@@ -143,7 +144,9 @@ test('prompt: сборка текста с префиксом и ключ пои
   assert.equal(composePrompt(job, { promptPrefix: 'P: ', promptSuffix: ' :S' }), 'P: A fictional adult woman, 30 years old, reading.\n\nAvoid: plastic skin, watermarks. :S');
   assert.equal(composePrompt({ ...job, prompt: `${job.prompt}\n\nAvoid: plastic skin, watermarks.` }, {}), `${job.prompt}\n\nAvoid: plastic skin, watermarks.`);
   assert.equal(composePrompt({ prompt: 'x'.repeat(30), negative: null }, { promptPrefix: '' }), 'x'.repeat(30));
-  assert.equal(promptKey('  Hello\n\n  world  '.repeat(20)).length, 60);
+  assert.equal(promptKey('  Hello\n\n  world  '.repeat(40)).split('\u001f').length, 12, 'длинный текст → 12 фрагментов');
+  assert.ok(promptKey('word '.repeat(2000)).length <= 400, 'ключ укладывается в лимит сообщения');
+  assert.equal(promptKey('  Hello \n world  '), 'Helloworld', 'короткий текст → целиком, без пробелов');
 });
 
 test('store: атомарная запись, откат при сбое, журнал по чанкам, удаление партии', async () => {
@@ -193,6 +196,7 @@ test('classify: блокировки — приоритет, область по
   assert.equal(analyzeSnapshot(snap({ authUrl: true })).blocker.code, 'AUTH_REQUIRED');
   assert.equal(analyzeSnapshot(snap({ hasComposer: false }), { requireUi: true }).blocker.code, 'UI_CHANGED');
   assert.equal(analyzeSnapshot(snap({ hasSend: false, hasStop: true }), { requireUi: true }).blocker, null);
+  assert.equal(analyzeSnapshot(snap({ hasSend: false, hasStop: false }), { requireUi: true }).blocker, null, 'пустое поле ввода: кнопки отправки ещё нет — это не «изменился интерфейс»');
   assert.equal(analyzeSnapshot(snap({ hasComposer: false })).blocker, null);
   assert.equal(analyzeSnapshot(snap({ online: false })).offline, true);
   const ru = analyzeSnapshot(snap({ alerts: ['Вы достигли лимита генерации изображений'] }));
@@ -238,7 +242,43 @@ test('decideWait: готово только после стабильности;
   const small = () => snap({ turns: [user, turn(1, 'assistant', '', [img('s', 128, 128)])], turnCount: 2 });
   assert.deepEqual(run([[0, 'x'], [1000, 'x'], [3000, 'x']], small), ['pending', 'pending', 'error:PREVIEW_ONLY']);
   const missing = () => snap({ turns: [], turnCount: 0 });
-  assert.deepEqual(run([[0, 'x'], [14000, 'x'], [16000, 'x']], missing), ['pending', 'pending', 'error:PROMPT_NOT_ACCEPTED']);
+  assert.deepEqual(run([[0, 'x'], [14000, 'x'], [16000, 'x']], missing), ['pending', 'pending', 'blocked:SENT_NOT_VISIBLE']);
   const same = decideWait(gen('gen'), ctx, {}, 0, opts);
   assert.equal(same.result.phase, 'generating');
+});
+
+test('promptKey: у заданий с общим префиксом ключи разные; сообщение находится однозначно', () => {
+  const prefix = 'Generate an image from the following description. Do not ask clarifying questions.\n\n';
+  const a = `${prefix}${'A photorealistic photo of a woman in a quiet street. '.repeat(8)}Scene A: she waters the plants on a balcony in the evening light, with a green watering can and a wooden chair beside her.\n\nAvoid: plastic skin, watermarks.`;
+  const b = a.replace('Scene A: she waters the plants on a balcony', 'Scene B: she rides a bicycle along the river bank');
+  const ka = promptKey(a);
+  const kb = promptKey(b);
+  assert.notEqual(ka, kb);
+  const turns = [turn(0, 'user', normalizeLikeChat(a)), turn(1, 'assistant', 'ok'), turn(2, 'user', normalizeLikeChat(b))];
+  assert.equal(findUserTurn(snap({ turns }), ka).i, 0, 'ключ задания A не совпадает с сообщением B');
+  assert.equal(findUserTurn(snap({ turns }), kb).i, 2);
+  assert.equal(findUserTurn(snap({ turns: turns.slice(2) }), ka), null, 'только чужое сообщение → «не найдено»');
+  function normalizeLikeChat(t) {
+    return `You said:${t.split('\n').join('')}`;
+  }
+});
+
+test('findUserTurn: допускает скрытый заголовок и склеенные абзацы, не принимает сообщения ассистента', () => {
+  const text = 'Generate an image: A fictional adult woman, 30 years old, reading a book in a cafe';
+  const key = promptKey(text);
+  assert.ok(findUserTurn(snap({ turns: [turn(0, 'user', `Вы сказали:Generate an image:\nA fictional adult woman,\n30 years old, reading a book in a cafe`)] }), key));
+  assert.equal(findUserTurn(snap({ turns: [turn(0, 'assistant', text)] }), key), null);
+  assert.equal(findUserTurn(snap({ turns: [turn(0, 'user', text)] }), ''), null);
+});
+
+test('siteFailure: разные причины «сайт не найден»', () => {
+  assert.deepEqual(siteFailure({ code: 'NO_TAB', message: 'Откройте сайт' }), { connected: false, tabFound: false, code: 'NO_TAB', reason: 'Откройте сайт' });
+  const noBridge = siteFailure({ code: 'TIMEOUT', message: 'нет ответа' });
+  assert.equal(noBridge.code, 'NO_BRIDGE');
+  assert.equal(noBridge.tabFound, true);
+  assert.match(noBridge.reason, /Ctrl\+F5/);
+  assert.equal(siteFailure({ code: 'VERSION_MISMATCH' }).code, 'BRIDGE_VERSION');
+  const other = siteFailure({ code: 'TAB_UNREACHABLE', message: 'x' });
+  assert.deepEqual([other.connected, other.tabFound], [false, true]);
+  assert.equal(siteFailure().connected, false);
 });
