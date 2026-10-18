@@ -184,6 +184,7 @@ export class FakePage {
     this.opened = [];
     this.pending = null;
     this.watch = {};
+    this.tokens = new Map();
     this.lastImage = null;
     this.cur = this.#newConv();
   }
@@ -213,11 +214,11 @@ export class FakePage {
     const p = this.pending;
     if (!p || this.clock.now() < p.readyAt || p.done) return;
     const { mode, size } = p.beh;
-    const mkImg = (reuse) => {
+    const mkImg = (reuse, sameBytes) => {
       if (reuse && this.lastImage) return this.lastImage;
       const n = ++this.imgSeq;
       const src = `https://chatgpt.com/backend-api/estuary/content?id=file_${n}&sig=s${n}`;
-      this.images.register(src, fakePng(size, size, n));
+      this.images.register(src, sameBytes && this.lastImage ? this.images.map.get(this.lastImage.src) : fakePng(size, size, n));
       const img = { key: `estuary:file_${n}`, src, alt: 'Generated image: test', w: size, h: size, complete: true };
       this.lastImage = img;
       return img;
@@ -228,6 +229,7 @@ export class FakePage {
     this.cur.turns = turns;
     if (mode === 'normal' || mode === 'small-image') turns.push({ role: 'assistant', text: '', images: [mkImg(false)] });
     else if (mode === 'same-image') turns.push({ role: 'assistant', text: '', images: [mkImg(true)] });
+    else if (mode === 'same-bytes') turns.push({ role: 'assistant', text: '', images: [mkImg(false, true)] });
     else if (mode === 'two-images') turns.push({ role: 'assistant', text: '', images: [mkImg(false), mkImg(false)] });
     else if (mode === 'text-only') turns.push({ role: 'assistant', text: 'Sure! Here is a detailed description of the photo you asked for, as plain text.', images: [] });
     else if (mode === 'rate-limit') turns.push({ role: 'assistant', text: "You've hit the free plan limit for image generations requests. You can create more images when the limit resets.", images: [] });
@@ -264,8 +266,9 @@ export class FakePage {
     if (!this.alive) throw new AdapterError('TAB_CLOSED', 'Вкладка закрыта');
     return this.snapshot();
   }
-  async submit(_tabId, { text, key }) {
+  async submit(_tabId, { text, key, token }) {
     if (!this.alive) throw new AdapterError('TAB_CLOSED', 'Вкладка закрыта');
+    if (token && this.tokens.has(token)) return this.tokens.get(token); // как content script: тот же token → тот же ответ, без повторной отправки
     if (!this.online) throw new AdapterError('NETWORK', 'Нет сети');
     const raw = this.script.shift() ?? 'normal';
     const beh = { mode: typeof raw === 'string' ? raw : raw.mode, delayMs: raw.delayMs ?? this.defaults.delayMs, size: raw.size ?? (raw === 'small-image' || raw.mode === 'small-image' ? 128 : this.defaults.size) };
@@ -282,7 +285,9 @@ export class FakePage {
       this.convs.set(this.cur.url, this.cur);
     }
     this.sent.push({ text, key, mode: beh.mode, at: this.clock.now(), conv: this.cur.id });
-    return { accepted: true, baseline, url: this.cur.url, userTurnIndex: userIdx };
+    const ack = { accepted: true, baseline, url: this.cur.url, userTurnIndex: userIdx };
+    if (token) this.tokens.set(token, ack);
+    return ack;
   }
   async locate(_tabId, { key, minSide = 0, usedKeys = [] }) {
     const snap = await this.snapshotAsync();
@@ -319,6 +324,10 @@ export class FakePage {
   closeTab() {
     this.alive = false;
   }
+  /** Генерация, запущенная не расширением (страница занята). */
+  startForeignGeneration() {
+    this.pending = { beh: { mode: 'hang', delayMs: 0, size: 1024 }, readyAt: this.clock.now(), userIdx: -1, done: false };
+  }
   reopenTab() {
     this.alive = true;
   }
@@ -349,6 +358,7 @@ export function makeEnv({ area = new FakeArea(), clock = new FakeClock(), page, 
 export function restartWorker(env) {
   const store = new Store(env.area, { now: env.clock.now });
   const orch = new Orchestrator({ store, now: env.clock.now, setTimeout: env.clock.setTimeout, clearTimeout: env.clock.clearTimeout, sleep: env.clock.sleep, page: env.pageAdapter, images: env.images, downloads: env.downloads, notify: (...a) => env.notes.push(a) });
+  env.store.commit = () => new Promise(() => {}); // «убитый» service worker больше ничего не записывает
   env.orch.ticking = true; // старый экземпляр больше не должен ничего делать
   env.orch.tick = async () => {};
   env.orch.kick = () => {};

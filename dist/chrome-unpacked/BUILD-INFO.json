@@ -1,0 +1,6 @@
+{
+  "name": "realphoto-chatgpt-batch-extension",
+  "version": "1.0.0",
+  "source_sha256": "739351d6761ea961242cdf7cee5e67edb9d196ecde6487441912f27113aa29eb",
+  "esbuild": "0.28.2"
+}
