@@ -159,6 +159,7 @@ const ui = {
   tab: 'queue',
   busy: false, // выполняется команда управления очередью
   creating: false,
+  siteProgress: null, // { done, total } от сайта, пока он собирает партию
   pausing: false, // «Пауза» нажата, worker ещё не подтвердил
   offline: false,
   importFile: null,
@@ -251,7 +252,7 @@ const pickView = (res) => (isObj(res.view) ? res.view : isObj(res.runner) ? res 
 function toast(message, kind = 'info', code) {
   const box = byId('toast');
   clearTimeout(ui.toastTimer);
-  const close = el('button', { type: 'button', class: 'toast-close', 'aria-label': t('toast.close'), text: '×' });
+  const close = el('button', { type: 'button', class: 'toast-close', 'aria-label': t('toast.close') });
   close.addEventListener('click', clearToast);
   box.className = `toast toast-${kind}`;
   if (code) box.dataset.code = code;
@@ -329,10 +330,14 @@ function connectPort() {
   let gotView = false;
   const connectedAt = Date.now();
   port.onMessage.addListener((msg) => {
-    if (isObj(msg) && msg.type === 'VIEW' && isObj(msg.view)) {
+    if (!isObj(msg)) return;
+    if (msg.type === 'VIEW' && isObj(msg.view)) {
       gotView = true;
       ui.portFailures = 0;
       applyView(msg.view);
+    } else if (msg.type === 'SITE_PROGRESS' && ui.creating) {
+      ui.siteProgress = { done: num(msg.done), total: num(msg.total) };
+      renderPending();
     }
   });
   port.onDisconnect.addListener(() => {
@@ -376,6 +381,7 @@ function renderHeader(view) {
   if (site.connected) {
     setChip(byId('site-status'), 'ok', 'connected', site.engine ? t('site.connected', { engine: site.engine }) : t('site.connectedNoEngine'));
   } else setChip(byId('site-status'), 'warn', 'missing', t('site.missing'));
+  byId('site-status').title = site.connected || !site.reason ? '' : String(site.reason);
 
   if (chatgpt.tabFound && chatgpt.ready !== false) setChip(byId('chatgpt-status'), 'ok', 'ready', t('chatgpt.ready'));
   else if (chatgpt.tabFound) setChip(byId('chatgpt-status'), 'warn', 'not-ready', t('chatgpt.notReady'));
@@ -763,7 +769,9 @@ function updateForm() {
   setDisabled('btn-create-batch', ui.creating || level === 'error' || f.total === null || !!f.errors.seed);
   setDisabled('btn-test-job', ui.creating || !!f.errors.seed);
   setDisabled('btn-import-test', ui.creating);
-  byId('site-hint').hidden = f.mode === 'import' || !!ui.view.site.connected;
+  const { site } = ui.view;
+  byId('site-hint').hidden = f.mode === 'import' || !!site.connected;
+  setText(byId('site-hint'), site.reason ? `${t('create.siteHint')} ${site.reason}` : t('create.siteHint'));
   document.querySelectorAll('.chip-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.frames === byId('input-frames').value.trim())));
 }
 
@@ -832,9 +840,25 @@ function onModeChange() {
   updateForm();
 }
 
+function renderPending() {
+  const p = ui.siteProgress;
+  const known = ui.creating && p && p.total > 0;
+  const bar = byId('create-pending').querySelector('progress');
+  if (known) {
+    bar.max = p.total;
+    bar.value = Math.min(p.done, p.total);
+  } else {
+    bar.removeAttribute('value');
+    bar.removeAttribute('max');
+  }
+  setText(byId('create-pending-text'), known ? t('create.progress', { done: p.done, total: p.total }) : t('create.pending'));
+}
+
 function setCreating(on) {
   ui.creating = on;
+  ui.siteProgress = null;
   byId('create-pending').hidden = !on;
+  renderPending();
   updateForm();
 }
 
@@ -895,6 +919,8 @@ function readText(file) {
   });
 }
 
+const fileNameOf = (file) => file.name.slice(-200); // worker принимает имя до 200 символов
+
 function renderImportInfo() {
   const f = ui.importFile;
   setText(byId('import-file-info'), f ? t('import.selected', { name: f.name, size: fmtBytes(f.size) }) : t('import.none'));
@@ -918,9 +944,9 @@ async function onImportFile(event) {
       toast(t('err.fileRead'), 'error');
       return;
     }
-    ui.importFile = { name: file.name, size: file.size, text };
+    ui.importFile = { name: fileNameOf(file), size: file.size, text };
     renderImportInfo();
-    await submitBatch('IMPORT_BATCH', { text, fileName: file.name });
+    await submitBatch('IMPORT_BATCH', { text, fileName: fileNameOf(file) });
   } finally {
     input.value = ''; // чтобы тот же файл можно было выбрать повторно
   }
